@@ -61,6 +61,6 @@ torchmetrics==1.6.0
 
 timm
 pythreejs
-torchdiffe
+torchdiffeq
 deepspeed
 
