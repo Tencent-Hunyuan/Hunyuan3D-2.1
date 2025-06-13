@@ -115,6 +115,9 @@ from textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
 shape_pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained('tencent/Hunyuan3D-2.1')
 mesh_untextured = shape_pipeline(image='assets/demo.png')[0]
 
+# execute this if encounter error of ModuleNotFoundError: No module named 'torchvision.transforms.functional_tensor'
+# exec(open('torchvision_fix.py').read())
+
 paint_pipeline = Hunyuan3DPaintPipeline(Hunyuan3DPaintConfig(max_num_view=6, resolution=512))
 mesh_textured = paint_pipeline(mesh_path, image_path='assets/demo.png')
 ```
