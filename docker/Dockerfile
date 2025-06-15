@@ -56,11 +56,6 @@ RUN pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url h
 # Clone Hunyuan3D-2.1 repository
 RUN git clone https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1.git
 
-# Remove Chinese mirror sources and torchdiffeq from requirements.txt
-RUN cd /workspace/Hunyuan3D-2.1 && \
-    sed -i '/--extra-index-url https:\/\/mirrors\.cloud\.tencent\.com\/pypi\/simple\//d' requirements.txt && \
-    sed -i '/--extra-index-url https:\/\/mirrors\.aliyun\.com\/pypi\/simple/d' requirements.txt
-
 # Install Python dependencies from modified requirements.txt
 RUN pip install -r Hunyuan3D-2.1/requirements.txt
 
@@ -78,6 +73,19 @@ RUN cd /workspace/Hunyuan3D-2.1/hy3dpaint/DifferentiableRenderer && \
 
 RUN cd /workspace/Hunyuan3D-2.1 && \
 	wget https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth -P ckpt
+
+# Create ckpt folder in hy3dpaint and download RealESRGAN model
+RUN cd /workspace/Hunyuan3D-2.1/hy3dpaint && \
+    mkdir -p ckpt && \
+    wget https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth -P ckpt
+
+# Modify textureGenPipeline.py to update config path
+RUN cd /workspace/Hunyuan3D-2.1/hy3dpaint && \
+    sed -i 's/self\.multiview_cfg_path = "cfgs\/hunyuan-paint-pbr\.yaml"/self.multiview_cfg_path = "hy3dpaint\/cfgs\/hunyuan-paint-pbr.yaml"/' textureGenPipeline.py
+
+# Modify multiview_utils.py to update custom_pipeline path
+RUN cd /workspace/Hunyuan3D-2.1/hy3dpaint/utils && \
+    sed -i 's/custom_pipeline = config\.custom_pipeline/custom_pipeline = os.path.join(os.path.dirname(__file__),"..","hunyuanpaintpbr")/' multiview_utils.py
 
 # Set working directory to the cloned repository
 WORKDIR /workspace/Hunyuan3D-2.1
