@@ -119,6 +119,10 @@ from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
 shape_pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained('tencent/Hunyuan3D-2.1')
 mesh_untextured = shape_pipeline(image='assets/demo.png')[0]
 
+from utils.torchvision_fix import apply_fix
+
+apply_fix()
+
 paint_pipeline = Hunyuan3DPaintPipeline(Hunyuan3DPaintConfig(max_num_view=6, resolution=512))
 mesh_textured = paint_pipeline(mesh_path, image_path='assets/demo.png')
 ```
