@@ -107,5 +107,5 @@ RUN rm -f /workspace/*.zip && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Set default command
-CMD ["/bin/bash"]
+# Set default command (change to python to python3 if needed)
+CMD ["python", "gradio_app.py", "--host", "0.0.0.0", "--port", "7860"]
