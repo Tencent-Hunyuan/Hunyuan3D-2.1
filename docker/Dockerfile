@@ -71,9 +71,6 @@ RUN cd /workspace/Hunyuan3D-2.1/hy3dpaint/custom_rasterizer && \
 RUN cd /workspace/Hunyuan3D-2.1/hy3dpaint/DifferentiableRenderer && \
     bash compile_mesh_painter.sh
 
-RUN cd /workspace/Hunyuan3D-2.1 && \
-	wget https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth -P ckpt
-
 # Create ckpt folder in hy3dpaint and download RealESRGAN model
 RUN cd /workspace/Hunyuan3D-2.1/hy3dpaint && \
     mkdir -p ckpt && \
