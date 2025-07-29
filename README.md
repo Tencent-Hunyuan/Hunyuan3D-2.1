@@ -93,6 +93,8 @@ Hunyuan3D 2.1 supports Macos, Windows, Linux. You may follow the next steps to u
 
 ### Install Requirements
 We test our model on an A100 GPU with Python 3.10 and PyTorch 2.5.1+cu124.
+#### Standard Installation (Inference)
+This is the recommended setup for running inference with our provided models and Gradio app.
 ```bash
 pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
 pip install -r requirements.txt
@@ -106,7 +108,12 @@ cd ../..
 
 wget https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth -P hy3dpaint/ckpt
 ```
-
+### Optional Installation (For Training)
+The deepspeed library is used for training optimization. It is not required for inference. If you plan to train the model, install it separately. Note: deepspeed installation can be complex and may require custom steps depending on your OS.
+Generated bash
+```python
+pip install deepspeed
+```
 ### Code Usage
 
 We designed a diffusers-like API to use our shape generation model - Hunyuan3D-Shape and texture synthesis model -
@@ -127,8 +134,6 @@ mesh_untextured = shape_pipeline(image='assets/demo.png')[0]
 paint_pipeline = Hunyuan3DPaintPipeline(Hunyuan3DPaintConfig(max_num_view=6, resolution=512))
 mesh_textured = paint_pipeline(mesh_path, image_path='assets/demo.png')
 ```
-
-
 ### Gradio App
 
 You could also host a [Gradio](https://www.gradio.app/) App in your own computer via:
