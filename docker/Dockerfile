@@ -50,7 +50,7 @@ ENV PATH="/workspace/miniconda3/envs/hunyuan3d21/bin:${PATH}"
 RUN conda config --set always_yes true
 
 RUN conda install Ninja
-RUN conda install cuda -c nvidia/label/cuda-12.4.1 -y
+RUN conda install -c nvidia -c conda-forge cuda=12.4 -y
 
 # Update libstdcxx-ng to fix compatibility issues (auto-confirm)
 RUN conda install -c conda-forge libstdcxx-ng -y
