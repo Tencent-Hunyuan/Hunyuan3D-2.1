@@ -38,6 +38,10 @@ ENV PATH="/workspace/miniconda3/bin:${PATH}"
 # initialize conda
 RUN conda init bash
 
+# Accept Anaconda TOS for required channels
+RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+
 # create and activate conda environment
 RUN conda create -n hunyuan3d21 python=3.10 && echo "source activate hunyuan3d21" > ~/.bashrc
 ENV PATH="/workspace/miniconda3/envs/hunyuan3d21/bin:${PATH}"
@@ -46,7 +50,7 @@ ENV PATH="/workspace/miniconda3/envs/hunyuan3d21/bin:${PATH}"
 RUN conda config --set always_yes true
 
 RUN conda install Ninja
-RUN conda install cuda -c nvidia/label/cuda-12.4.1 -y
+RUN conda install -c nvidia -c conda-forge cuda=12.4 -y
 
 # Update libstdcxx-ng to fix compatibility issues (auto-confirm)
 RUN conda install -c conda-forge libstdcxx-ng -y
