@@ -26,7 +26,7 @@ Stop the container:
 docker stop hy3d21
 ```
 
-You can find the demo link showing in terminal, such as `http://0.0.0.0:7860`, then you cuold access `http://127.0.0.1:7860` from your host machine.
+You can find the demo link showing in terminal, such as `http://0.0.0.0:7860`, then you could access `http://127.0.0.1:7860` from your host machine.
 
 Some notes:
 1. the total built time might take more than one hour.
