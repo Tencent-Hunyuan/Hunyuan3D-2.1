@@ -199,7 +199,10 @@ if __name__ == "__main__":
     parser.add_argument("--model_path", type=str, default='tencent/Hunyuan3D-2.1')
     parser.add_argument("--subfolder", type=str, default='hunyuan3d-dit-v2-1')
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument('--mc_algo', type=str, default='mc')
     parser.add_argument("--limit-model-concurrency", type=int, default=5)
+    parser.add_argument('--enable_flashvdm', action='store_true')
+    parser.add_argument('--compile', action='store_true')
     parser.add_argument('--low_vram_mode', action='store_true')
     parser.add_argument('--cache-path', type=str, default='./gradio_cache')
     args = parser.parse_args()
@@ -219,6 +222,9 @@ if __name__ == "__main__":
         low_vram_mode=args.low_vram_mode,
         worker_id=worker_id,
         model_semaphore=model_semaphore,
-        save_dir=SAVE_DIR
+        save_dir=SAVE_DIR,
+        mc_algo=args.mc_algo,
+        enable_flashvdm=args.enable_flashvdm,
+        compile=args.compile
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

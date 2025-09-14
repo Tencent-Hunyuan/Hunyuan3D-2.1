@@ -58,6 +58,11 @@ model:
     first_stage_config:
       target: hy3dshape.models.autoencoders.ShapeVAE
       from_pretrained: tencent/Hunyuan3D-2.1
+      #Ensure same with the dataset setting
+      params: 
+        pc_size: 81920              
+        pc_sharpedge_size: 0 
+
 
     cond_stage_config:
       target: hy3dshape.models.conditioner.SingleImageEncoder

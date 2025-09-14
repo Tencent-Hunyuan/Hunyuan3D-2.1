@@ -38,9 +38,10 @@ ENV PATH="/workspace/miniconda3/bin:${PATH}"
 # initialize conda
 RUN conda init bash
 
-# Accept Conda Terms of Service for required channels
-RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
-    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+
+# Accept Anaconda TOS for required channels
+RUN conda tos accept --channel https://repo.anaconda.com/pkgs/main && \
+    conda tos accept --channel https://repo.anaconda.com/pkgs/r
 
 # create and activate conda environment
 RUN conda create -n hunyuan3d21 python=3.10 && echo "source activate hunyuan3d21" > ~/.bashrc
