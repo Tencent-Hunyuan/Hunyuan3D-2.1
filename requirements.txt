@@ -1,5 +1,6 @@
 --extra-index-url https://mirrors.cloud.tencent.com/pypi/simple/
 --extra-index-url https://mirrors.aliyun.com/pypi/simple
+--extra-index-url https://download.blender.org/pypi/
 
 # Build Tools
 ninja==1.11.1.1
@@ -53,7 +54,7 @@ psutil==6.0.0
 cupy-cuda12x==13.4.1
 
 # Blender
-bpy==4.0
+bpy==4.0.0
 
 # ONNX Runtime
 onnxruntime==1.16.3
