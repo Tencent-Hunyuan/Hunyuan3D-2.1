@@ -53,7 +53,7 @@ psutil==6.0.0
 cupy-cuda12x==13.4.1
 
 # Blender
-bpy==4.0
+# bpy==4.0
 
 # ONNX Runtime
 onnxruntime==1.16.3
