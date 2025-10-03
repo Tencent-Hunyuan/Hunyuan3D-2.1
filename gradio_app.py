@@ -486,7 +486,7 @@ def build_app():
 
     """
 
-    with gr.Blocks(theme=gr.themes.Base(), title='Hunyuan-3D-2.1', analytics_enabled=False, css=custom_css) as demo:
+    with gr.Blocks(theme=gr.themes.Base(), title='Alpha 2.0', analytics_enabled=False, css=custom_css) as demo:
         gr.HTML(title_html)
 
         with gr.Row():
@@ -761,7 +761,7 @@ if __name__ == '__main__':
     HTML_OUTPUT_PLACEHOLDER = f"""
     <div style='height: {650}px; width: 100%; border-radius: 8px; border-color: #e5e7eb; border-style: solid; border-width: 1px; display: flex; justify-content: center; align-items: center;'>
       <div style='text-align: center; font-size: 16px; color: #6b7280;'>
-        <p style="color: #8d8d8d;">Welcome to Hunyuan3D!</p>
+        <p style="color: #8d8d8d;">Welcome to Alpha 2.0 powered by Alpha Intelligence!</p>
         <p style="color: #8d8d8d;">No mesh here.</p>
       </div>
     </div>
