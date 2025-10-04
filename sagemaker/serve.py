@@ -270,39 +270,107 @@ async def invocations(request: Request):
         mesh = trimesh.load(file_path)
         processed_mesh = process_mesh(mesh, max_faces=face_count)
         
-        # For async inference: Save files to /opt/ml/output/data
-        # SageMaker automatically uploads all files from this directory to S3
-        output_dir = "/opt/ml/output/data"
-        os.makedirs(output_dir, exist_ok=True)
+        # For async inference: Upload files directly to S3
+        # Get S3 output path from environment variable
+        s3_output_path = os.environ.get('SAGEMAKER_OUTPUT_PATH', '')
         
-        logger.info(f"Saving models to: {output_dir}")
+        logger.info(f"S3 output path: {s3_output_path}")
         
-        # 1. Copy original GLB to output directory
-        import shutil
+        # Generate filenames
         glb_filename = f"{uid}.glb"
-        glb_path = os.path.join(output_dir, glb_filename)
-        shutil.copy(file_path, glb_path)
-        logger.info(f"Saved original GLB: {glb_path}")
-        
-        # 2. Export processed mesh to output directory
         stl_filename = f"{uid}.{output_format}"
-        stl_path = os.path.join(output_dir, stl_filename)
-        processed_mesh.export(stl_path)
-        logger.info(f"Saved processed {output_format}: {stl_path}")
         
-        # 3. Return metadata
-        # This JSON goes to S3 as <request-id>.out
-        # The GLB and STL files also get uploaded to the same S3 folder
-        response = {
-            'success': True,
-            'format': output_format,
-            'faces': int(processed_mesh.faces.shape[0]),
-            'vertices': int(processed_mesh.vertices.shape[0]),
-            'worker_id': worker_id,
-            'glb_filename': glb_filename,
-            'stl_filename': stl_filename,
-            'message': f'Models saved: {glb_filename} (original) and {stl_filename} (processed)'
-        }
+        # Save files locally first
+        local_output_dir = "/tmp/output"
+        os.makedirs(local_output_dir, exist_ok=True)
+        
+        # 1. Save original GLB
+        import shutil
+        glb_local_path = os.path.join(local_output_dir, glb_filename)
+        shutil.copy(file_path, glb_local_path)
+        logger.info(f"Saved GLB locally: {glb_local_path}")
+        
+        # 2. Export processed mesh
+        stl_local_path = os.path.join(local_output_dir, stl_filename)
+        processed_mesh.export(stl_local_path)
+        logger.info(f"Saved STL locally: {stl_local_path}")
+        
+        # 3. Upload to S3 if output path is available
+        if s3_output_path:
+            try:
+                import boto3
+                s3_client = boto3.client('s3')
+                
+                # Parse S3 path: s3://bucket/key/prefix
+                s3_parts = s3_output_path.replace('s3://', '').split('/', 1)
+                bucket = s3_parts[0]
+                prefix = s3_parts[1] if len(s3_parts) > 1 else ''
+                
+                # Upload GLB
+                glb_s3_key = f"{prefix}/{glb_filename}"
+                s3_client.upload_file(glb_local_path, bucket, glb_s3_key)
+                logger.info(f"Uploaded GLB to S3: s3://{bucket}/{glb_s3_key}")
+                
+                # Upload STL
+                stl_s3_key = f"{prefix}/{stl_filename}"
+                s3_client.upload_file(stl_local_path, bucket, stl_s3_key)
+                logger.info(f"Uploaded STL to S3: s3://{bucket}/{stl_s3_key}")
+                
+                # Return metadata with S3 paths
+                response = {
+                    'success': True,
+                    'format': output_format,
+                    'faces': int(processed_mesh.faces.shape[0]),
+                    'vertices': int(processed_mesh.vertices.shape[0]),
+                    'worker_id': worker_id,
+                    'glb_filename': glb_filename,
+                    'stl_filename': stl_filename,
+                    'glb_s3_path': f"s3://{bucket}/{glb_s3_key}",
+                    'stl_s3_path': f"s3://{bucket}/{stl_s3_key}",
+                    'message': f'Models uploaded to S3: {glb_filename} and {stl_filename}'
+                }
+                
+            except Exception as e:
+                logger.error(f"Failed to upload to S3: {e}")
+                # Fallback to base64 if S3 upload fails
+                with open(glb_local_path, 'rb') as f_glb:
+                    glb_model_data = base64.b64encode(f_glb.read()).decode('utf-8')
+                with open(stl_local_path, 'rb') as f_stl:
+                    stl_model_data = base64.b64encode(f_stl.read()).decode('utf-8')
+                response = {
+                    'success': True,
+                    'glb_model_data': glb_model_data,
+                    'stl_model_data': stl_model_data,
+                    'format': output_format,
+                    'faces': int(processed_mesh.faces.shape[0]),
+                    'vertices': int(processed_mesh.vertices.shape[0]),
+                    'worker_id': worker_id,
+                    'error': f'S3 upload failed: {str(e)}'
+                }
+        else:
+            # No S3 path available, return base64
+            logger.warning("No SAGEMAKER_OUTPUT_PATH found, returning base64")
+            with open(glb_local_path, 'rb') as f_glb:
+                    glb_model_data = base64.b64encode(f_glb.read()).decode('utf-8')
+                with open(stl_local_path, 'rb') as f_stl:
+                    stl_model_data = base64.b64encode(f_stl.read()).decode('utf-8')
+            response = {
+                'success': True,
+                'glb_model_data': glb_model_data,
+                'stl_model_data': stl_model_data,
+                'format': output_format,
+                'faces': int(processed_mesh.faces.shape[0]),
+                'vertices': int(processed_mesh.vertices.shape[0]),
+                'worker_id': worker_id
+            }
+        
+        # Clean up local files
+        try:
+            os.remove(glb_local_path)
+            os.remove(stl_local_path)
+            logger.info("Cleaned up local temp files")
+        except Exception as e:
+            logger.warning(f"Failed to clean up local files: {e}")
         
         logger.info(f"Successfully generated model: {processed_mesh.faces.shape[0]} faces, {processed_mesh.vertices.shape[0]} vertices")
         
