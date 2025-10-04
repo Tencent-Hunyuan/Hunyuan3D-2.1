@@ -270,11 +270,12 @@ async def invocations(request: Request):
         mesh = trimesh.load(file_path)
         processed_mesh = process_mesh(mesh, max_faces=face_count)
         
-        # For async inference: Upload files directly to S3
-        # Get S3 output path from environment variable
-        s3_output_path = os.environ.get('SAGEMAKER_OUTPUT_PATH', '')
+        # Get S3 output location from environment variables (set during deployment)
+        s3_bucket = os.environ.get('S3_OUTPUT_BUCKET')
+        s3_prefix = os.environ.get('S3_OUTPUT_PREFIX', 'outputs')
         
-        logger.info(f"S3 output path: {s3_output_path}")
+        logger.info(f"S3 bucket: {s3_bucket}")
+        logger.info(f"S3 prefix: {s3_prefix}")
         
         # Generate filenames
         glb_filename = f"{uid}.glb"
@@ -295,28 +296,25 @@ async def invocations(request: Request):
         processed_mesh.export(stl_local_path)
         logger.info(f"Saved STL locally: {stl_local_path}")
         
-        # 3. Upload to S3 if output path is available
-        if s3_output_path:
+        # 3. Upload to S3 if bucket is configured
+        if s3_bucket:
             try:
                 import boto3
                 s3_client = boto3.client('s3')
                 
-                # Parse S3 path: s3://bucket/key/prefix
-                s3_parts = s3_output_path.replace('s3://', '').split('/', 1)
-                bucket = s3_parts[0]
-                prefix = s3_parts[1] if len(s3_parts) > 1 else ''
-                
                 # Upload GLB
-                glb_s3_key = f"{prefix}/{glb_filename}"
-                s3_client.upload_file(glb_local_path, bucket, glb_s3_key)
-                logger.info(f"Uploaded GLB to S3: s3://{bucket}/{glb_s3_key}")
+                glb_s3_key = f"{s3_prefix}/{glb_filename}"
+                s3_client.upload_file(glb_local_path, s3_bucket, glb_s3_key)
+                glb_s3_path = f"s3://{s3_bucket}/{glb_s3_key}"
+                logger.info(f"Uploaded GLB to: {glb_s3_path}")
                 
                 # Upload STL
-                stl_s3_key = f"{prefix}/{stl_filename}"
-                s3_client.upload_file(stl_local_path, bucket, stl_s3_key)
-                logger.info(f"Uploaded STL to S3: s3://{bucket}/{stl_s3_key}")
+                stl_s3_key = f"{s3_prefix}/{stl_filename}"
+                s3_client.upload_file(stl_local_path, s3_bucket, stl_s3_key)
+                stl_s3_path = f"s3://{s3_bucket}/{stl_s3_key}"
+                logger.info(f"Uploaded STL to: {stl_s3_path}")
                 
-                # Return metadata with S3 paths
+                # Return response with S3 paths
                 response = {
                     'success': True,
                     'format': output_format,
@@ -325,39 +323,29 @@ async def invocations(request: Request):
                     'worker_id': worker_id,
                     'glb_filename': glb_filename,
                     'stl_filename': stl_filename,
-                    'glb_s3_path': f"s3://{bucket}/{glb_s3_key}",
-                    'stl_s3_path': f"s3://{bucket}/{stl_s3_key}",
-                    'message': f'Models uploaded to S3: {glb_filename} and {stl_filename}'
+                    'glb_s3_path': glb_s3_path,
+                    'stl_s3_path': stl_s3_path,
+                    'message': f'Models uploaded: {glb_filename} and {stl_filename}'
                 }
                 
             except Exception as e:
-                logger.error(f"Failed to upload to S3: {e}")
-                # Fallback to base64 if S3 upload fails
-                with open(glb_local_path, 'rb') as f_glb:
-                    glb_model_data = base64.b64encode(f_glb.read()).decode('utf-8')
-                with open(stl_local_path, 'rb') as f_stl:
-                    stl_model_data = base64.b64encode(f_stl.read()).decode('utf-8')
+                logger.error(f"S3 upload failed: {e}")
+                traceback.print_exc()
+                # Return error but don't fail the request
                 response = {
-                    'success': True,
-                    'glb_model_data': glb_model_data,
-                    'stl_model_data': stl_model_data,
+                    'success': False,
+                    'error': f'S3 upload failed: {str(e)}',
                     'format': output_format,
                     'faces': int(processed_mesh.faces.shape[0]),
                     'vertices': int(processed_mesh.vertices.shape[0]),
-                    'worker_id': worker_id,
-                    'error': f'S3 upload failed: {str(e)}'
+                    'worker_id': worker_id
                 }
         else:
-            # No S3 path available, return base64
-            logger.warning("No SAGEMAKER_OUTPUT_PATH found, returning base64")
-            with open(glb_local_path, 'rb') as f_glb:
-                    glb_model_data = base64.b64encode(f_glb.read()).decode('utf-8')
-                with open(stl_local_path, 'rb') as f_stl:
-                    stl_model_data = base64.b64encode(f_stl.read()).decode('utf-8')
+            # No S3 bucket configured
+            logger.error("S3_OUTPUT_BUCKET not configured")
             response = {
-                'success': True,
-                'glb_model_data': glb_model_data,
-                'stl_model_data': stl_model_data,
+                'success': False,
+                'error': 'S3_OUTPUT_BUCKET environment variable not set',
                 'format': output_format,
                 'faces': int(processed_mesh.faces.shape[0]),
                 'vertices': int(processed_mesh.vertices.shape[0]),
@@ -372,7 +360,7 @@ async def invocations(request: Request):
         except Exception as e:
             logger.warning(f"Failed to clean up local files: {e}")
         
-        logger.info(f"Successfully generated model: {processed_mesh.faces.shape[0]} faces, {processed_mesh.vertices.shape[0]} vertices")
+        logger.info(f"Successfully processed model: {processed_mesh.faces.shape[0]} faces, {processed_mesh.vertices.shape[0]} vertices")
         
         return JSONResponse(content=response, status_code=200)
         
