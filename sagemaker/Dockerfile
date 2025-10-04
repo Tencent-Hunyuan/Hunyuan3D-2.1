@@ -111,6 +111,7 @@ RUN mkdir -p gradio_cache
 # Copy serving script (you'll create this)
 COPY serve.py /opt/program/serve.py
 RUN chmod +x /opt/program/serve.py
+RUN pip install -r Hunyuan3D-2.1/sagemaker/requirements.txt
 
 # Cleanup
 RUN rm -f /workspace/*.zip && \
