@@ -192,6 +192,7 @@ async def invocations(request: Request):
         
         # Extract parameters
         image_b64 = input_data['image']
+        filename_base = input_data.get('filename_base')  # NEW: Get our consistent filename
         remove_background = input_data.get('remove_background', True)
         texture = input_data.get('texture', False)
         seed = input_data.get('seed', 1234)
@@ -210,6 +211,7 @@ async def invocations(request: Request):
             )
         
         logger.info(f"Processing request:")
+        logger.info(f"  - filename_base: {filename_base}")
         logger.info(f"  - image size: {len(image_b64)} bytes (base64)")
         logger.info(f"  - remove_background: {remove_background}")
         logger.info(f"  - texture: {texture}")
@@ -231,7 +233,14 @@ async def invocations(request: Request):
             )
         
         # Create GenerationRequest
-        uid = uuid.uuid4()
+        # Use filename_base if provided, otherwise generate UUID
+        if filename_base:
+            uid = filename_base  # Use our consistent naming
+            logger.info(f"Using provided filename_base as uid: {uid}")
+        else:
+            uid = str(uuid.uuid4())  # Fallback to UUID
+            logger.info(f"No filename_base provided, generated uid: {uid}")
+        
         from api_models import GenerationRequest
         
         generation_request = GenerationRequest(
@@ -277,9 +286,17 @@ async def invocations(request: Request):
         logger.info(f"S3 bucket: {s3_bucket}")
         logger.info(f"S3 prefix: {s3_prefix}")
         
-        # Generate filenames
-        glb_filename = f"{uid}.glb"
-        stl_filename = f"{uid}.{output_format}"
+        # Generate filenames using consistent naming
+        if filename_base:
+            # Use our consistent naming pattern
+            glb_filename = f"{filename_base}.glb"
+            stl_filename = f"{filename_base}.{output_format}"
+            logger.info(f"Using consistent filenames: GLB={glb_filename}, STL={stl_filename}")
+        else:
+            # Fallback to UUID naming
+            glb_filename = f"{uid}.glb"
+            stl_filename = f"{uid}.{output_format}"
+            logger.info(f"Using UUID filenames: GLB={glb_filename}, STL={stl_filename}")
         
         # Save files locally first
         local_output_dir = "/tmp/output"
