@@ -193,6 +193,8 @@ async def invocations(request: Request):
         # Extract parameters
         image_b64 = input_data['image']
         filename_base = input_data.get('filename_base')  # NEW: Get our consistent filename
+        request_id = input_data.get('request_id')        # NEW: Get request_id for S3 metadata
+        timestamp = input_data.get('timestamp')          # NEW: Get timestamp for S3 metadata
         remove_background = input_data.get('remove_background', True)
         texture = input_data.get('texture', False)
         seed = input_data.get('seed', 1234)
@@ -212,6 +214,8 @@ async def invocations(request: Request):
         
         logger.info(f"Processing request:")
         logger.info(f"  - filename_base: {filename_base}")
+        logger.info(f"  - request_id: {request_id}")
+        logger.info(f"  - timestamp: {timestamp}")
         logger.info(f"  - image size: {len(image_b64)} bytes (base64)")
         logger.info(f"  - remove_background: {remove_background}")
         logger.info(f"  - texture: {texture}")
@@ -319,15 +323,37 @@ async def invocations(request: Request):
                 import boto3
                 s3_client = boto3.client('s3')
                 
+                # Prepare S3 metadata
+                s3_metadata = {}
+                if request_id:
+                    s3_metadata['request-id'] = request_id
+                if timestamp:
+                    s3_metadata['timestamp'] = timestamp
+                if filename_base:
+                    s3_metadata['filename-base'] = filename_base
+                
                 # Upload GLB
                 glb_s3_key = f"{s3_prefix}/{glb_filename}"
-                s3_client.upload_file(glb_local_path, s3_bucket, glb_s3_key)
+                if s3_metadata:
+                    s3_client.upload_file(
+                        glb_local_path, s3_bucket, glb_s3_key,
+                        ExtraArgs={'Metadata': s3_metadata}
+                    )
+                else:
+                    s3_client.upload_file(glb_local_path, s3_bucket, glb_s3_key)
                 glb_s3_path = f"s3://{s3_bucket}/{glb_s3_key}"
                 logger.info(f"Uploaded GLB to: {glb_s3_path}")
                 
-                # Upload STL
+                # Upload STL with metadata
                 stl_s3_key = f"{s3_prefix}/{stl_filename}"
-                s3_client.upload_file(stl_local_path, s3_bucket, stl_s3_key)
+                if s3_metadata:
+                    s3_client.upload_file(
+                        stl_local_path, s3_bucket, stl_s3_key,
+                        ExtraArgs={'Metadata': s3_metadata}
+                    )
+                    logger.info(f"Uploaded STL with metadata: {s3_metadata}")
+                else:
+                    s3_client.upload_file(stl_local_path, s3_bucket, stl_s3_key)
                 stl_s3_path = f"s3://{s3_bucket}/{stl_s3_key}"
                 logger.info(f"Uploaded STL to: {stl_s3_path}")
                 
