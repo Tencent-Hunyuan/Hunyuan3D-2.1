@@ -139,7 +139,7 @@ class MVImageProcessorV2(ImageProcessorV2):
         images = []
         masks = []
         view_idxs = []
-        for idx, (view_tag, image) in enumerate(image_dict.items()):
+        for view_tag, image in image_dict.items():
             view_idxs.append(self.view2idx[view_tag])
             image, mask = self.load_image(image, border_ratio=border_ratio, to_tensor=to_tensor)
             images.append(image)
