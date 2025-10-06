@@ -227,12 +227,13 @@ def _gen_shape(
     num_chunks=200000,
     randomize_seed: bool = False,
 ):
-    if not MV_MODE and image is None and caption is None:
-        raise gr.Error("Please provide either a caption or an image.")
-    if MV_MODE:
-        if mv_image_front is None and mv_image_back is None \
-            and mv_image_left is None and mv_image_right is None:
-            raise gr.Error("Please provide at least one view image.")
+    # Handle both single image and multiview modes
+    if image is None and caption is None and mv_image_front is None and mv_image_back is None \
+        and mv_image_left is None and mv_image_right is None:
+        raise gr.Error("Please provide either a caption, single image, or at least one view image.")
+    
+    # If multiview images are provided, use them
+    if mv_image_front is not None or mv_image_back is not None or mv_image_left is not None or mv_image_right is not None:
         image = {}
         if mv_image_front:
             image['front'] = mv_image_front
@@ -276,14 +277,16 @@ def _gen_shape(
 
     # remove disk io to make responding faster, uncomment at your will.
     # image.save(os.path.join(save_folder, 'input.png'))
-    if MV_MODE:
+    
+    # Handle background removal for both single image and multiview modes
+    if isinstance(image, dict):  # Multiview mode
         start_time = time.time()
         for k, v in image.items():
             if check_box_rembg or v.mode == "RGB":
                 img = rmbg_worker(v.convert('RGB'))
                 image[k] = img
         time_meta['remove background'] = time.time() - start_time
-    else:
+    else:  # Single image mode
         if check_box_rembg or image.mode == "RGB":
             start_time = time.time()
             image = rmbg_worker(image.convert('RGB'))
@@ -317,7 +320,11 @@ def _gen_shape(
     stats['number_of_vertices'] = mesh.vertices.shape[0]
 
     stats['time'] = time_meta
-    main_image = image if not MV_MODE else image['front']
+    # Handle main_image for both single image and multiview modes
+    if isinstance(image, dict):  # Multiview mode
+        main_image = image.get('front', list(image.values())[0] if image else None)
+    else:  # Single image mode
+        main_image = image
     return mesh, main_image, save_folder, stats, seed
 
 @spaces.GPU(duration=60)
@@ -490,14 +497,14 @@ def build_app():
         with gr.Row():
             with gr.Column(scale=3):
                 with gr.Tabs(selected='tab_img_prompt') as tabs_prompt:
-                    with gr.Tab('Image Prompt', id='tab_img_prompt', visible=not MV_MODE) as tab_ip:
+                    with gr.Tab('Single Image', id='tab_img_prompt') as tab_ip:
                         image = gr.Image(label='Image', type='pil', image_mode='RGBA', height=290)
                         caption = gr.State(None)
 #                    with gr.Tab('Text Prompt', id='tab_txt_prompt', visible=HAS_T2I and not MV_MODE) as tab_tp:
 #                        caption = gr.Textbox(label='Text Prompt',
 #                                             placeholder='HunyuanDiT will be used to generate image.',
 #                                             info='Example: A 3D model of a cute cat, white background')
-                    with gr.Tab('MultiView Prompt', visible=MV_MODE) as tab_mv:
+                    with gr.Tab('MultiView Prompt', id='tab_mv') as tab_mv:
                         # gr.Label('Please upload at least one front image.')
                         with gr.Row():
                             mv_image_front = gr.Image(label='Front', type='pil', image_mode='RGBA', height=140,
@@ -593,8 +600,7 @@ Fast for very complex cases, Standard seldom use.',
             with gr.Column(scale=3 if MV_MODE else 2):
                 with gr.Tabs(selected='tab_img_gallery') as gallery:
                     with gr.Tab('Image to 3D Gallery', 
-                                id='tab_img_gallery', 
-                                visible=not MV_MODE) as tab_gi:
+                                id='tab_img_gallery') as tab_gi:
                         with gr.Row():
                             gr.Examples(examples=example_is, inputs=[image],
                                         label=None, examples_per_page=18)
@@ -751,7 +757,7 @@ if __name__ == '__main__':
     os.makedirs(SAVE_DIR, exist_ok=True)
 
     CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-    MV_MODE = 'mv' in args.model_path
+    MV_MODE = True  # Enable multi-view mode by default
     TURBO_MODE = 'turbo' in args.subfolder
 
     HTML_HEIGHT = 690 if MV_MODE else 650
