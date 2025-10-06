@@ -162,8 +162,6 @@ def export_mesh(mesh, save_folder, textured=False, type='glb'):
     return path
 
 
-
-
 def quick_convert_with_obj2gltf(obj_path: str, glb_path: str) -> bool:
     # 执行转换
     textures = {
