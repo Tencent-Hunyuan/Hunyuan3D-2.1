@@ -497,6 +497,14 @@ class Hunyuan3DDiTPipeline:
         if isinstance(image, str) and not os.path.exists(image):
             raise FileNotFoundError(f"Couldn't find image at path {image}")
 
+        # Handle multi-view images (dictionary format)
+        if isinstance(image, dict):
+            # Use MVImageProcessorV2 for multi-view images
+            from .preprocessors import MVImageProcessorV2
+            mv_processor = MVImageProcessorV2(size=512)
+            output = mv_processor(image)
+            return output
+
         if not isinstance(image, list):
             image = [image]
 
