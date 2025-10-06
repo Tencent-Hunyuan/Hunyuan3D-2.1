@@ -501,7 +501,16 @@ class Hunyuan3DDiTPipeline:
         if isinstance(image, dict):
             # Use MVImageProcessorV2 for multi-view images
             from .preprocessors import MVImageProcessorV2
-            mv_processor = MVImageProcessorV2(size=512)
+            # Get the correct size from the conditioner (DINO models expect 518)
+            # Check if we can get the size from the conditioner
+            if hasattr(self.conditioner, 'main_image_encoder') and hasattr(self.conditioner.main_image_encoder, 'size'):
+                # Calculate image size from the conditioner's patch size
+                patch_size = self.conditioner.main_image_encoder.size
+                image_size = patch_size * 14  # DINO uses 14x14 patches
+            else:
+                # Fallback to 518 for DINO models
+                image_size = 518
+            mv_processor = MVImageProcessorV2(size=image_size)
             output = mv_processor(image)
             return output
 
@@ -510,6 +519,14 @@ class Hunyuan3DDiTPipeline:
 
         outputs = []
         for img in image:
+            # Ensure the image processor uses the correct size for DINO models
+            if hasattr(self.conditioner, 'main_image_encoder') and hasattr(self.conditioner.main_image_encoder, 'size'):
+                # Calculate image size from the conditioner's patch size
+                patch_size = self.conditioner.main_image_encoder.size
+                image_size = patch_size * 14  # DINO uses 14x14 patches
+                # Update the image processor size if it's different
+                if self.image_processor.size != image_size:
+                    self.image_processor.size = image_size
             output = self.image_processor(img)
             outputs.append(output)
 
