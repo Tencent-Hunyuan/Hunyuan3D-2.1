@@ -791,17 +791,17 @@ if __name__ == '__main__':
             except Exception as fix_error:
                 print(f"Warning: Failed to apply torchvision fix: {fix_error}")
             
-            from hy3dgen.texgen import Hunyuan3DPaintPipeline
-            texgen_worker = Hunyuan3DPaintPipeline.from_pretrained(args.texgen_model_path)
-            if args.low_vram_mode:
-                texgen_worker.enable_model_cpu_offload()
+            # from hy3dgen.texgen import Hunyuan3DPaintPipeline
+            # texgen_worker = Hunyuan3DPaintPipeline.from_pretrained(args.texgen_model_path)
+            # if args.low_vram_mode:
+            #     texgen_worker.enable_model_cpu_offload()
 
-            # from hy3dpaint.textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
-            # conf = Hunyuan3DPaintConfig(max_num_view=8, resolution=768)
-            # conf.realesrgan_ckpt_path = "hy3dpaint/ckpt/RealESRGAN_x4plus.pth"
-            # conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
-            # conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
-            # tex_pipeline = Hunyuan3DPaintPipeline(conf)
+            from hy3dpaint.textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
+            conf = Hunyuan3DPaintConfig(max_num_view=8, resolution=768)
+            conf.realesrgan_ckpt_path = "hy3dpaint/ckpt/RealESRGAN_x4plus.pth"
+            conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
+            conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
+            tex_pipeline = Hunyuan3DPaintPipeline(conf)
         
             # Not help much, ignore for now.
             # if args.compile:
