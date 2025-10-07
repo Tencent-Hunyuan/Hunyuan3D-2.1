@@ -754,6 +754,7 @@ if __name__ == '__main__':
 
     CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
     MV_MODE = 'mv' in args.model_path
+    # MV_MODE = True
     TURBO_MODE = 'turbo' in args.subfolder
 
     HTML_HEIGHT = 690 if MV_MODE else 650
