@@ -735,7 +735,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, default='tencent/Hunyuan3D-2mv')
-    parser.add_argument("--subfolder", type=str, default='hunyuan3d-dit-v2-1')
+    parser.add_argument("--subfolder", type=str, default='hunyuan3d-dit-v2-mv')
     parser.add_argument("--texgen_model_path", type=str, default='tencent/Hunyuan3D-2.1')
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--host', type=str, default='0.0.0.0')
