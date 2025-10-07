@@ -71,7 +71,6 @@ RUN pip install bpy==4.0 --extra-index-url https://download.blender.org/pypi/
 # Clone Hunyuan3D-2.1 repository
 RUN git clone https://github.com/AryanGrutto/Hunyuan3D-2.1.git
 
-
 # Install Python dependencies from modified requirements.txt
 RUN pip install -r Hunyuan3D-2.1/requirements.txt
 
@@ -124,6 +123,7 @@ RUN rm -f /workspace/*.zip && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+    
 # Set default command
 WORKDIR /workspace/Hunyuan3D-2.1
 RUN mkdir gradio_cache
