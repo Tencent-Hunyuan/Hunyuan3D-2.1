@@ -162,6 +162,8 @@ def export_mesh(mesh, save_folder, textured=False, type='glb'):
     return path
 
 
+
+
 def quick_convert_with_obj2gltf(obj_path: str, glb_path: str) -> bool:
     # 执行转换
     textures = {
@@ -450,13 +452,13 @@ def shape_generation(
 
 
 def build_app():
-    title = 'Hunyuan3D-2: High Resolution Textured 3D Assets Generation'
-    if MV_MODE:
-        title = 'Hunyuan3D-2mv: Image to 3D Generation with 1-4 Views'
-    if 'mini' in args.subfolder:
-        title = 'Hunyuan3D-2mini: Strong 0.6B Image to Shape Generator'
-
     title = 'Introducing Alpha 2.0 Image to 3D Generation'
+    if MV_MODE:
+        title = 'Alpha3D-2-mv: Image to 3D Generation with 1-4 Views'
+    if 'mini' in args.subfolder:
+        title = 'Alpha3D-2mini: Strong 0.6B Image to Shape Generator'
+
+    title = 'Alpha3D-2'
         
     if TURBO_MODE:
         title = title.replace(':', '-Turbo: Fast ')
@@ -467,7 +469,7 @@ def build_app():
     {title}
     </div>
     <div align="center">
-    Made by Alpha Intelligence
+    Alpha Intelligence Team
     </div>
     """
     custom_css = """
@@ -484,7 +486,7 @@ def build_app():
 
     """
 
-    with gr.Blocks(theme=gr.themes.Base(), title='Alpha 2.0', analytics_enabled=False, css=custom_css) as demo:
+    with gr.Blocks(theme=gr.themes.Base(), title='Alpha3d 2.0', analytics_enabled=False, css=custom_css) as demo:
         gr.HTML(title_html)
 
         with gr.Row():
@@ -759,7 +761,7 @@ if __name__ == '__main__':
     HTML_OUTPUT_PLACEHOLDER = f"""
     <div style='height: {650}px; width: 100%; border-radius: 8px; border-color: #e5e7eb; border-style: solid; border-width: 1px; display: flex; justify-content: center; align-items: center;'>
       <div style='text-align: center; font-size: 16px; color: #6b7280;'>
-        <p style="color: #8d8d8d;">Welcome to Alpha 2.0 powered by Alpha Intelligence!</p>
+        <p style="color: #8d8d8d;">Welcone to Alpha 2.0 powered by Alpha Intelligence</p>
         <p style="color: #8d8d8d;">No mesh here.</p>
       </div>
     </div>
