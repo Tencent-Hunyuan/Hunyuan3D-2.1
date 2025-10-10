@@ -624,8 +624,9 @@ Fast for very complex cases, Standard seldom use.',
             ],
             outputs=[file_out, html_gen_mesh, stats, seed]
         ).then(
-            lambda: (gr.update(visible=False, value=False), gr.update(interactive=True), gr.update(interactive=True),
-                     gr.update(interactive=False)),
+            lambda file_path: (gr.update(visible=False, value=False), gr.update(interactive=True), gr.update(interactive=True),
+                     gr.update(value=file_path, interactive=True)),
+            inputs=[file_out],
             outputs=[export_texture, reduce_face, confirm_export, file_export],
         ).then(
             lambda: gr.update(selected='gen_mesh_panel'),
@@ -651,8 +652,9 @@ Fast for very complex cases, Standard seldom use.',
             ],
             outputs=[file_out, file_out2, html_gen_mesh, stats, seed]
         ).then(
-            lambda: (gr.update(visible=True, value=True), gr.update(interactive=False), gr.update(interactive=True),
-                     gr.update(interactive=False)),
+            lambda file_path: (gr.update(visible=True, value=True), gr.update(interactive=False), gr.update(interactive=True),
+                     gr.update(value=file_path, interactive=True)),
+            inputs=[file_out2],
             outputs=[export_texture, reduce_face, confirm_export, file_export],
         ).then(
             lambda: gr.update(selected='gen_mesh_panel'),
