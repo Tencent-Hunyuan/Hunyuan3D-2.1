@@ -18,7 +18,6 @@ import sys
 sys.path.insert(0, './hy3dshape')
 sys.path.insert(0, './hy3dpaint')
 
-
 try:
     from torchvision_fix import apply_fix
     apply_fix()
@@ -38,6 +37,7 @@ from pathlib import Path
 
 import gradio as gr
 import torch
+import intel_extension_for_pytorch as ipex 
 import trimesh
 import uvicorn
 from fastapi import FastAPI
@@ -48,6 +48,20 @@ import numpy as np
 from hy3dshape.utils import logger
 from hy3dpaint.convert_utils import create_glb_with_pbr_materials
 
+# Import device utilities
+from xpu_check_utils import (
+    validate_xpu_setup,
+    debug_pipeline_tensors,
+    force_xpu_fp16_consistency,
+    validate_xpu_model_loading,
+    check_device_memory,
+    estimate_model_memory_requirements,
+    quick_memory_check,
+    get_optimal_device_with_memory_check,
+    clear_device_cache,
+    get_memory_callback,
+    cleanup_xpu_memory
+)
 
 MAX_SEED = 1e7
 ENV = "Local" # "Huggingface"
@@ -83,6 +97,7 @@ else:
                 self.duration = duration
             def __call__(self, func):
                 return func 
+
 
 def get_example_img_list():
     """
@@ -137,7 +152,6 @@ def gen_save_folder(max_size=200):
     return new_folder
 
 
-# Removed complex PBR conversion functions - using simple trimesh-based conversion
 def export_mesh(mesh, save_folder, textured=False, type='glb'):
     """
     Export a mesh to a file in the specified folder, optionally including textures.
@@ -162,8 +176,6 @@ def export_mesh(mesh, save_folder, textured=False, type='glb'):
     return path
 
 
-
-
 def quick_convert_with_obj2gltf(obj_path: str, glb_path: str) -> bool:
     # 执行转换
     textures = {
@@ -173,7 +185,6 @@ def quick_convert_with_obj2gltf(obj_path: str, glb_path: str) -> bool:
         }
     create_glb_with_pbr_materials(obj_path, textures, glb_path)
             
-
 
 def randomize_seed_fn(seed: int, randomize_seed: bool) -> int:
     if randomize_seed:
@@ -213,6 +224,109 @@ height="{height}" width="100%" frameborder="0"></iframe>'
         </div>
     """
 
+def load_model_with_detailed_monitoring(args):
+    """Load model with detailed memory monitoring and XPU fixes"""
+    
+    # Check initial memory state
+    check_device_memory()
+    estimated_memory = estimate_model_memory_requirements()
+    
+    # Check if we have enough memory
+    if args.device.startswith('xpu') and hasattr(torch, 'xpu') and torch.xpu.is_available():
+        cleanup_xpu_memory()
+        try:
+            props = torch.xpu.get_device_properties(0)
+            available_gb = (props.total_memory - torch.xpu.memory_reserved(0)) / 1024**3
+            
+            print(f"🔍 MEMORY CHECK:")
+            print(f"    Available XPU Memory: {available_gb:.2f} GB")
+            print(f"    Estimated Required:   {estimated_memory:.2f} GB")
+            
+            if available_gb < estimated_memory:
+                print(f"    ⚠️  WARNING: Insufficient memory!")
+                print(f"    💡 Recommendation: Use CPU or enable model offloading")
+            else:
+                print(f"    ✅ Sufficient memory available")
+                
+        except Exception as e:
+            print(f"    ❌ Memory check failed: {e}")
+    
+    # Clear cache before loading
+    clear_device_cache(args.device)
+    
+    print(f"\n[DEBUG] 🚀 Starting model loading on {args.device}...")
+    
+    try:
+        # Monitor memory during loading
+        memory_callback = get_memory_callback(args.device)
+        
+        print("[DEBUG] Loading model components...")
+        memory_callback()
+        
+        # Load with explicit dtype for XPU
+        if args.device.startswith('xpu'):
+            i23d_worker = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+                args.model_path,
+                subfolder=args.subfolder,
+                use_safetensors=False,
+                device=args.device,
+                dtype=torch.float16,  # Explicit FP16 for XPU
+            )
+        else:
+            i23d_worker = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+                args.model_path,
+                subfolder=args.subfolder,
+                use_safetensors=False,
+                device=args.device,
+            )
+        
+        print("[DEBUG] ✅ Model loaded successfully!")
+        memory_callback()
+        
+        # Apply XPU-specific fixes
+        if args.device.startswith('xpu'):
+            from xpu_check_utils import force_xpu_fp16_consistency, debug_pipeline_tensors, validate_xpu_model_loading
+            
+            # Debug initial state
+            debug_pipeline_tensors(i23d_worker, args.device)
+            
+            # Force FP16 consistency
+            if force_xpu_fp16_consistency(i23d_worker, args.device):
+                print("[DEBUG] ✅ XPU FP16 consistency applied")
+            else:
+                print("[DEBUG] ❌ Failed to apply XPU FP16 consistency")
+            
+            # Validate model loading
+            if validate_xpu_model_loading(i23d_worker, args.device):
+                print("[DEBUG] ✅ XPU model validation passed")
+            else:
+                print("[DEBUG] ❌ XPU model validation failed - consider using CPU")
+                return None, None
+            
+            # Additional XPU optimizations
+            torch.backends.cudnn.enabled = False  # Disable CUDNN
+            
+            # Test basic XPU functionality
+            try:
+                test_tensor = torch.randn(2, 2, dtype=torch.float16, device=args.device)
+                test_result = test_tensor * 2
+                torch.xpu.synchronize()  # Ensure operation completes
+                print(f"[DEBUG] ✅ Basic XPU operations working")
+            except Exception as e:
+                print(f"[DEBUG] ❌ Basic XPU operations failed: {e}")
+        
+        return i23d_worker, args.device
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"[DEBUG] ❌ Loading failed: {error_msg}")
+        
+        # Show memory state at failure
+        print("[DEBUG] Memory state at failure:")
+        check_device_memory()
+        
+        return None, None
+
 @spaces.GPU(duration=60)
 def _gen_shape(
     caption=None,
@@ -246,9 +360,19 @@ def _gen_shape(
             image['right'] = mv_image_right
 
     seed = int(randomize_seed_fn(seed, randomize_seed))
-
     octree_resolution = int(octree_resolution)
-    if caption: print('prompt is', caption)
+    
+    # XPU-specific debugging
+    if args.device.startswith('xpu'):
+        print(f"[XPU DEBUG] Input image type: {type(image)}")
+        if hasattr(image, 'dtype'):
+            print(f"[XPU DEBUG] Input image dtype: {image.dtype}")
+        if hasattr(image, 'device'):
+            print(f"[XPU DEBUG] Input image device: {image.device}")
+    
+    if caption: 
+        print('prompt is', caption)
+        
     save_folder = gen_save_folder()
     stats = {
         'model': {
@@ -272,12 +396,10 @@ def _gen_shape(
         try:
             image = t2i_worker(caption)
         except Exception as e:
-            raise gr.Error(f"Text to 3D is disable. \
-            Please enable it by `python gradio_app.py --enable_t23d`.")
+            raise gr.Error(f"Text to 3D is disable. Please enable it by `python gradio_app.py --enable_t23d`.")
         time_meta['text2image'] = time.time() - start_time
 
-    # remove disk io to make responding faster, uncomment at your will.
-    # image.save(os.path.join(save_folder, 'input.png'))
+    # Background removal
     if MV_MODE:
         start_time = time.time()
         for k, v in image.items():
@@ -291,23 +413,62 @@ def _gen_shape(
             image = rmbg_worker(image.convert('RGB'))
             time_meta['remove background'] = time.time() - start_time
 
-    # remove disk io to make responding faster, uncomment at your will.
-    # image.save(os.path.join(save_folder, 'rembg.png'))
+    # Ensure input is on correct device and dtype for XPU
+    if args.device.startswith('xpu') and hasattr(image, 'to'):
+        image = image.to(device=args.device, dtype=torch.float16)
+        print(f"[XPU DEBUG] Moved image to {image.device} with dtype {image.dtype}")
 
-    # image to white model
+    # Enhanced pipeline call with XPU debugging
     start_time = time.time()
-
     generator = torch.Generator()
     generator = generator.manual_seed(int(seed))
-    outputs = i23d_worker(
-        image=image,
-        num_inference_steps=steps,
-        guidance_scale=guidance_scale,
-        generator=generator,
-        octree_resolution=octree_resolution,
-        num_chunks=num_chunks,
-        output_type='mesh'
-    )
+    
+    print(f"[XPU DEBUG] About to call pipeline...")
+    print(f"[XPU DEBUG] Pipeline device: {i23d_worker.device}")
+    print(f"[XPU DEBUG] Pipeline dtype: {i23d_worker.dtype}")
+    
+    # XPU synchronization before pipeline call
+    if args.device.startswith('xpu'):
+        torch.xpu.synchronize()
+    
+    try:
+        outputs = i23d_worker(
+            image=image,
+            num_inference_steps=steps,
+            guidance_scale=guidance_scale,
+            generator=generator,
+            octree_resolution=octree_resolution,
+            num_chunks=num_chunks,
+            output_type='mesh'
+        )
+        
+        # XPU synchronization after pipeline call
+        if args.device.startswith('xpu'):
+            torch.xpu.synchronize()
+        
+        print(f"[XPU DEBUG] Pipeline completed in {time.time() - start_time:.2f}s")
+        print(f"[XPU DEBUG] Output type: {type(outputs)}")
+        
+        if isinstance(outputs, list) and len(outputs) > 0:
+            print(f"[XPU DEBUG] First output type: {type(outputs[0])}")
+            if hasattr(outputs[0], 'vertices'):
+                print(f"[XPU DEBUG] Vertices shape: {outputs[0].vertices.shape}")
+                print(f"[XPU DEBUG] Faces shape: {outputs[0].faces.shape}")
+                
+                # Check if mesh is actually empty
+                if len(outputs[0].vertices) == 0 or len(outputs[0].faces) == 0:
+                    print(f"[XPU DEBUG] ❌ EMPTY MESH DETECTED!")
+                    print(f"[XPU DEBUG] Vertices: {len(outputs[0].vertices)}")
+                    print(f"[XPU DEBUG] Faces: {len(outputs[0].faces)}")
+                else:
+                    print(f"[XPU DEBUG] ✅ Valid mesh generated!")
+        
+    except Exception as e:
+        print(f"[XPU DEBUG] ❌ Pipeline failed: {e}")
+        import traceback
+        print(f"[XPU DEBUG] Full traceback: {traceback.format_exc()}")
+        raise e
+    
     time_meta['shape generation'] = time.time() - start_time
     logger.info("---Shape generation takes %s seconds ---" % (time.time() - start_time))
 
@@ -356,35 +517,22 @@ def generation_all(
     )
     path = export_mesh(mesh, save_folder, textured=False)
     
-
     print(path)
     print('='*40)
 
-    # tmp_time = time.time()
-    # mesh = floater_remove_worker(mesh)
-    # mesh = degenerate_face_remove_worker(mesh)
-    # logger.info("---Postprocessing takes %s seconds ---" % (time.time() - tmp_time))
-    # stats['time']['postprocessing'] = time.time() - tmp_time
-
     tmp_time = time.time()
     mesh = face_reduce_worker(mesh)
-
-    # path = export_mesh(mesh, save_folder, textured=False, type='glb')
-    path = export_mesh(mesh, save_folder, textured=False, type='obj') # 这样操作也会 core dump
-
+    path = export_mesh(mesh, save_folder, textured=False, type='obj')
     logger.info("---Face Reduction takes %s seconds ---" % (time.time() - tmp_time))
     stats['time']['face reduction'] = time.time() - tmp_time
 
     tmp_time = time.time()
-
     text_path = os.path.join(save_folder, f'textured_mesh.obj')
     path_textured = tex_pipeline(mesh_path=path, image_path=image, output_mesh_path=text_path, save_glb=False)
-        
     logger.info("---Texture Generation takes %s seconds ---" % (time.time() - tmp_time))
     stats['time']['texture generation'] = time.time() - tmp_time
 
     tmp_time = time.time()
-    # Convert textured OBJ to GLB using obj2gltf with PBR support
     glb_path_textured = os.path.join(save_folder, 'textured_mesh.glb')
     conversion_success = quick_convert_with_obj2gltf(path_textured, glb_path_textured)
 
@@ -395,7 +543,7 @@ def generation_all(
                                                          height=HTML_HEIGHT, 
                                                          width=HTML_WIDTH, textured=True)
     if args.low_vram_mode:
-        torch.cuda.empty_cache()
+        clear_device_cache(args.device)
     return (
         gr.update(value=path),
         gr.update(value=glb_path_textured),
@@ -403,6 +551,7 @@ def generation_all(
         stats,
         seed,
     )
+
 
 @spaces.GPU(duration=60)
 def shape_generation(
@@ -442,7 +591,7 @@ def shape_generation(
     path = export_mesh(mesh, save_folder, textured=False)
     model_viewer_html = build_model_viewer_html(save_folder, height=HTML_HEIGHT, width=HTML_WIDTH)
     if args.low_vram_mode:
-        torch.cuda.empty_cache()
+        clear_device_cache(args.device)
     return (
         gr.update(value=path),
         model_viewer_html,
@@ -495,12 +644,7 @@ def build_app():
                     with gr.Tab('Image Prompt', id='tab_img_prompt', visible=not MV_MODE) as tab_ip:
                         image = gr.Image(label='Image', type='pil', image_mode='RGBA', height=290)
                         caption = gr.State(None)
-#                    with gr.Tab('Text Prompt', id='tab_txt_prompt', visible=HAS_T2I and not MV_MODE) as tab_tp:
-#                        caption = gr.Textbox(label='Text Prompt',
-#                                             placeholder='HunyuanDiT will be used to generate image.',
-#                                             info='Example: A 3D model of a cute cat, white background')
                     with gr.Tab('MultiView Prompt', visible=MV_MODE) as tab_mv:
-                        # gr.Label('Please upload at least one front image.')
                         with gr.Row():
                             mv_image_front = gr.Image(label='Front', type='pil', image_mode='RGBA', height=140,
                                                       min_width=100, elem_classes='mv-image')
@@ -602,8 +746,6 @@ Fast for very complex cases, Standard seldom use.',
                                         label=None, examples_per_page=18)
 
         tab_ip.select(fn=lambda: gr.update(selected='tab_img_gallery'), outputs=gallery)
-        #if HAS_T2I:
-        #    tab_tp.select(fn=lambda: gr.update(selected='tab_txt_gallery'), outputs=gallery)
 
         btn.click(
             shape_generation,
@@ -732,14 +874,14 @@ Fast for very complex cases, Standard seldom use.',
 
 if __name__ == '__main__':
     import argparse
-
+    
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, default='tencent/Hunyuan3D-2.1')
     parser.add_argument("--subfolder", type=str, default='hunyuan3d-dit-v2-1')
     parser.add_argument("--texgen_model_path", type=str, default='tencent/Hunyuan3D-2.1')
-    parser.add_argument('--port', type=int, default=8080)
+    parser.add_argument('--port', type=int, default=8888)
     parser.add_argument('--host', type=str, default='0.0.0.0')
-    parser.add_argument('--device', type=str, default='cuda')
+    parser.add_argument('--device', type=str, default='cpu')
     parser.add_argument('--mc_algo', type=str, default='mc')
     parser.add_argument('--cache-path', type=str, default='./save_dir')
     parser.add_argument('--enable_t23d', action='store_true')
@@ -749,6 +891,28 @@ if __name__ == '__main__':
     parser.add_argument('--low_vram_mode', action='store_true')
     args = parser.parse_args()
     
+    # Install psutil if needed
+    try:
+        import psutil
+    except ImportError:
+        print("Installing psutil for memory monitoring...")
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "psutil"])
+        import psutil
+    
+    # Check initial memory state
+    print("="*60)
+    print("STARTUP MEMORY CHECK")
+    print("="*60)
+    check_device_memory()
+    
+    # Auto-detect device if not specified
+    if args.device is None:
+        args.device = get_optimal_device_with_memory_check()
+    
+    print(f"[DEBUG] Target device: {args.device}")
+    
+    # Set up directories and constants
     SAVE_DIR = args.cache_path
     os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -777,89 +941,92 @@ if __name__ == '__main__':
 
     SUPPORTED_FORMATS = ['glb', 'obj', 'ply', 'stl']
 
+    # Load texture generation if enabled
     HAS_TEXTUREGEN = False
     if not args.disable_tex:
         try:
-            # Apply torchvision fix before importing basicsr/RealESRGAN
-            print("Applying torchvision compatibility fix for texture generation...")
-            try:
-                from torchvision_fix import apply_fix
-                fix_result = apply_fix()
-                if not fix_result:
-                    print("Warning: Torchvision fix may not have been applied successfully")
-            except Exception as fix_error:
-                print(f"Warning: Failed to apply torchvision fix: {fix_error}")
-            
-            # from hy3dgen.texgen import Hunyuan3DPaintPipeline
-            # texgen_worker = Hunyuan3DPaintPipeline.from_pretrained(args.texgen_model_path)
-            # if args.low_vram_mode:
-            #     texgen_worker.enable_model_cpu_offload()
-
-            from hy3dpaint.textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
-            conf = Hunyuan3DPaintConfig(max_num_view=8, resolution=768)
-            conf.realesrgan_ckpt_path = "hy3dpaint/ckpt/RealESRGAN_x4plus.pth"
-            conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
-            conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
-            tex_pipeline = Hunyuan3DPaintPipeline(conf)
-        
-            # Not help much, ignore for now.
-            # if args.compile:
-            #     texgen_worker.models['delight_model'].pipeline.unet.compile()
-            #     texgen_worker.models['delight_model'].pipeline.vae.compile()
-            #     texgen_worker.models['multiview_model'].pipeline.unet.compile()
-            #     texgen_worker.models['multiview_model'].pipeline.vae.compile()
-            
+            from hy3dpaint import Hunyuan3DPaintPipeline
+            tex_pipeline = Hunyuan3DPaintPipeline.from_pretrained(
+                args.texgen_model_path,
+                subfolder='hunyuan3d-paint-v2-1',
+                device=args.device,
+            )
             HAS_TEXTUREGEN = True
-            
+            print("[DEBUG] ✅ Texture generation enabled")
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f"Error loading texture generator: {e}")
-            print("Failed to load texture generator.")
-            print('Please try to install requirements by following README.md')
-            HAS_TEXTUREGEN = False
+            print(f"[DEBUG] ⚠️ Texture generation disabled: {e}")
 
-    HAS_T2I = True
+    # Load text-to-image if enabled
+    HAS_T2I = False
     if args.enable_t23d:
-        from hy3dgen.text2image import HunyuanDiTPipeline
+        try:
+            from diffusers import HunyuanDiTPipeline
+            t2i_worker = HunyuanDiTPipeline.from_pretrained(
+                "Tencent-Hunyuan/HunyuanDiT-v1.2-Diffusers",
+                torch_dtype=torch.float16 if args.device in ['cuda', 'xpu'] else torch.float32
+            )
+            t2i_worker = t2i_worker.to(args.device)
+            HAS_T2I = True
+            print("[DEBUG] ✅ Text-to-image enabled")
+        except Exception as e:
+            print(f"[DEBUG] ⚠️ Text-to-image disabled: {e}")
 
-        t2i_worker = HunyuanDiTPipeline('Tencent-Hunyuan/HunyuanDiT-v1.1-Diffusers-Distilled')
-        HAS_T2I = True
-
+    # Load main components
     from hy3dshape import FaceReducer, FloaterRemover, DegenerateFaceRemover, MeshSimplifier, \
         Hunyuan3DDiTFlowMatchingPipeline
     from hy3dshape.pipelines import export_to_trimesh
     from hy3dshape.rembg import BackgroundRemover
 
     rmbg_worker = BackgroundRemover()
-    i23d_worker = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
-        args.model_path,
-        subfolder=args.subfolder,
-        use_safetensors=False,
-        device=args.device,
-    )
-    if args.enable_flashvdm:
-        mc_algo = 'mc' if args.device in ['cpu', 'mps'] else args.mc_algo
-        i23d_worker.enable_flashvdm(mc_algo=mc_algo)
+
+    # Load main model with detailed monitoring
+    print("\n" + "="*60)
+    print("LOADING MAIN MODEL")
+    print("="*60)
+    result = load_model_with_detailed_monitoring(args)
+    if result[0] is None:
+        print("❌ Model loading failed. Exiting...")
+        sys.exit(1)
+
+    i23d_worker, actual_device = result
+    args.device = actual_device
+    
+    print(f"\n[DEBUG] Final device: {args.device}")
+    
+    # Apply additional optimizations
+    # if args.enable_flashvdm:
+    #     mc_algo = 'mc' if args.device in ['cpu', 'mps'] else args.mc_algo
+    #     i23d_worker.enable_flashvdm(mc_algo=mc_algo)
     if args.compile:
         i23d_worker.compile()
 
+    # Load post-processing workers
     floater_remove_worker = FloaterRemover()
     degenerate_face_remove_worker = DegenerateFaceRemover()
     face_reduce_worker = FaceReducer()
 
-    # https://discuss.huggingface.co/t/how-to-serve-an-html-file/33921/2
-    # create a FastAPI app
+    # Final memory check
+    print("\n" + "="*60)
+    print("POST-LOADING MEMORY CHECK")
+    print("="*60)
+    check_device_memory()
+
+    # Set up web server
     app = FastAPI()
-    
-    # create a static directory to store the static files
     static_dir = Path(SAVE_DIR).absolute()
     static_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/static", StaticFiles(directory=static_dir, html=True), name="static")
     shutil.copytree('./assets/env_maps', os.path.join(static_dir, 'env_maps'), dirs_exist_ok=True)
 
+    # Final cleanup
     if args.low_vram_mode:
-        torch.cuda.empty_cache()
+        clear_device_cache(args.device)
+
     demo = build_app()
     app = gr.mount_gradio_app(app, demo, path="/")
+    
+    print(f"\n🚀 Starting server on {args.host}:{args.port}")
+    print(f"💾 Using device: {args.device}")
+    print(f"🔧 Low VRAM mode: {args.low_vram_mode}")
+    
     uvicorn.run(app, host=args.host, port=args.port)

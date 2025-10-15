@@ -1,5 +1,6 @@
 --extra-index-url https://mirrors.cloud.tencent.com/pypi/simple/
 --extra-index-url https://mirrors.aliyun.com/pypi/simple
+--extra-index-url https://download.blender.org/pypi/
 
 # Build Tools
 ninja==1.11.1.1
@@ -50,10 +51,13 @@ tqdm==4.66.5
 psutil==6.0.0
 
 # GPU Computing (requires CUDA)
-cupy-cuda12x==13.4.1
+# cupy-cuda12x==13.4.1
+
+# Add Intel XPU packages
+intel-extension-for-pytorch==2.8.10+xpu
 
 # Blender
-bpy==4.0
+bpy==4.0 
 
 # ONNX Runtime
 onnxruntime==1.16.3
@@ -65,4 +69,3 @@ timm
 pythreejs
 torchdiffeq
 deepspeed
-

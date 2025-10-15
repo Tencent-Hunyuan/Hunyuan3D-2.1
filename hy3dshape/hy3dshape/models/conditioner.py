@@ -81,7 +81,7 @@ class ImageEncoder(nn.Module):
 
         self.transform = transforms.Compose(
             [
-                transforms.Resize(image_size, transforms.InterpolationMode.BILINEAR, antialias=True),
+                transforms.Resize(image_size, transforms.InterpolationMode.BILINEAR, antialias=False),
                 transforms.CenterCrop(image_size),
                 transforms.Normalize(
                     mean=self.mean,
@@ -256,7 +256,7 @@ class SingleImageEncoder(nn.Module):
         if self.disable_drop:
             return outputs
         else:
-            random_p = torch.rand(len(image), device='cuda')
+            random_p = torch.rand(len(image), device='xpu')
             remain_bool_tensor = random_p > self.drop_ratio
             outputs['main'] *= remain_bool_tensor.view(-1,1,1)
         return outputs
