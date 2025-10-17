@@ -79,6 +79,7 @@ class Hunyuan3DPaintPipeline:
             texture_size=self.config.texture_size,
             bake_mode=self.config.bake_mode,
             raster_mode=self.config.raster_mode,
+            device=self.config.device
         )
         self.view_processor = ViewProcessor(self.config, self.render)
         self.load_models()

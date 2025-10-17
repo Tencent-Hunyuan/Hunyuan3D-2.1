@@ -11,21 +11,37 @@
 # optimizer states), machine-learning model code, inference-enabling code, training-enabling code,
 # fine-tuning enabling code and other elements of the foregoing made publicly available
 # by Tencent in accordance with TENCENT HUNYUAN COMMUNITY LICENSE AGREEMENT.
-
+import os
 from setuptools import setup, find_packages
+
 import torch
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension, CppExtension
 
-# build custom rasterizer
+# Check if CUDA is available
+has_cuda = torch.cuda.is_available() and not os.environ.get('FORCE_CPU', False)
 
-custom_rasterizer_module = CUDAExtension(
-    "custom_rasterizer_kernel",
-    [
-        "lib/custom_rasterizer_kernel/rasterizer.cpp",
-        "lib/custom_rasterizer_kernel/grid_neighbor.cpp",
-        "lib/custom_rasterizer_kernel/rasterizer_gpu.cu",
-    ],
-)
+# build custom rasterizer
+if has_cuda:
+    custom_rasterizer_module = CUDAExtension(
+        "custom_rasterizer_kernel",
+        [
+            "lib/custom_rasterizer_kernel/rasterizer.cpp",
+            "lib/custom_rasterizer_kernel/grid_neighbor.cpp",
+            "lib/custom_rasterizer_kernel/rasterizer_gpu.cu",
+        ],
+    )
+else:
+    custom_rasterizer_module = CppExtension(
+        "custom_rasterizer_kernel",
+        [
+            "lib/custom_rasterizer_kernel/rasterizer_cpu.cpp",
+            "lib/custom_rasterizer_kernel/grid_neighbor_cpu.cpp",
+        ],
+        extra_compile_args={
+            'cxx': ['-O3'],
+        },
+        define_macros=[("WITH_CUDA", None)] if has_cuda else [],
+    )
 
 setup(
     packages=find_packages(),

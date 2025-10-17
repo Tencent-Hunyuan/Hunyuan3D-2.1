@@ -800,6 +800,7 @@ if __name__ == '__main__':
             conf.realesrgan_ckpt_path = "hy3dpaint/ckpt/RealESRGAN_x4plus.pth"
             conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
             conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
+            conf.device = args.device
             tex_pipeline = Hunyuan3DPaintPipeline(conf)
         
             # Not help much, ignore for now.
