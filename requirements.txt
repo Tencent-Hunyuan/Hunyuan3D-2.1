@@ -1,5 +1,6 @@
 --extra-index-url https://mirrors.cloud.tencent.com/pypi/simple/
 --extra-index-url https://mirrors.aliyun.com/pypi/simple
+--extra-index-url https://download.blender.org/pypi/
 
 # Build Tools
 ninja==1.11.1.1
