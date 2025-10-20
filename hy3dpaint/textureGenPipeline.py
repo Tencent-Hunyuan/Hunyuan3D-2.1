@@ -20,12 +20,12 @@ import numpy as np
 from PIL import Image
 from typing import List
 from DifferentiableRenderer.MeshRender import MeshRender
+from convert_utils import create_glb_with_pbr_materials
 from utils.simplify_mesh_utils import remesh_mesh
 from utils.multiview_utils import multiviewDiffusionNet
 from utils.pipeline_utils import ViewProcessor
 from utils.image_super_utils import imageSuperNet
 from utils.uvwrap_utils import mesh_uv_wrap
-from DifferentiableRenderer.mesh_utils import convert_obj_to_glb
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -33,6 +33,13 @@ from diffusers.utils import logging as diffusers_logging
 
 diffusers_logging.set_verbosity(50)
 
+def quick_convert_with_obj2gltf(obj_path: str, glb_path: str):
+    textures = {
+        'albedo': obj_path.replace('.obj', '.jpg'),
+        'metallic': obj_path.replace('.obj', '_metallic.jpg'),
+        'roughness': obj_path.replace('.obj', '_roughness.jpg')
+        }
+    create_glb_with_pbr_materials(obj_path, textures, glb_path)
 
 class Hunyuan3DPaintConfig:
     def __init__(self, max_num_view, resolution):
@@ -186,7 +193,7 @@ class Hunyuan3DPaintPipeline:
         self.render.save_mesh(output_mesh_path, downsample=True)
 
         if save_glb:
-            convert_obj_to_glb(output_mesh_path, output_mesh_path.replace(".obj", ".glb"))
+            quick_convert_with_obj2gltf(output_mesh_path, output_mesh_path.replace(".obj", ".glb"))
             output_glb_path = output_mesh_path.replace(".obj", ".glb")
 
         return output_mesh_path
