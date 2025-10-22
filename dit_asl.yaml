@@ -1,0 +1,52 @@
+name: "HunyuanDiT-overfit-mini"
+
+training:
+  val_check_interval: 9999 # 不验证
+  limit_val_batches: 0
+  steps: 200
+  base_lr: 1e-3          # 稍大学习率加速下降
+  weight_decay: 0        # 过拟合阶段关闭 L2
+  grad_clip: 1.0
+  save_every: 50
+  every_n_train_steps: 200 # 每 200 步存一次 ckpt
+  monitor: null            
+  dtype: "float16"
+
+dataset:
+  target: hy3dshape.data.dit_asl.AlignedShapeLatentModule
+  params:
+    batch_size: 1          # 单卡单样本
+    num_workers: 0
+    train_data_list: tools/tiny_trainset/preprocessed  # 指向 1 个样本
+    val_data_list: tools/tiny_trainset/preprocessed
+    image_size: 518
+    mean: [0.5,0.5,0.5]
+    std:  [0.5,0.5,0.5]
+    pc_size: 4096          # 降采样，减少显存
+    return_normal: true
+    padding: true
+    augmentation:          # 轻量增强
+      rotation: 15
+      scale: [0.9,1.1]
+    shuffle: true
+model:
+  target: hy3dshape.models.diffusion.flow_matching_sit.Diffuser
+  params:
+    first_stage_config:
+      target: hy3dshape.models.autoencoders.ShapeVAE
+      from_pretrained: tencent/Hunyuan3D-2.1
+    denoiser_cfg:
+      target: hy3dshape.models.denoisers.hunyuandit.HunYuanDiTPlain
+      params:
+        input_size: 512     # 4096→1024，显存减半
+        in_channels: 64
+        hidden_size: 512    # 2048→1024
+        depth: 4             # 16→8
+        context_dim: 1024
+        num_heads: 8
+        dropout: 0.1         # 新增
+    optimizer_cfg:
+      optimizer:
+        target: torch.optim.AdamW
+        params:
+          weight_decay: 1e-2
