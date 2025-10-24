@@ -1,0 +1,57 @@
+--extra-index-url https://mirrors.cloud.tencent.com/pypi/simple/
+--extra-index-url https://mirrors.aliyun.com/pypi/simple
+
+# Build Tools
+ninja==1.11.1.1
+pybind11==2.13.4
+
+# Core ML/Deep Learning
+transformers==4.46.0
+diffusers==0.30.0
+accelerate==1.1.1
+pytorch-lightning>=2.0.0
+huggingface-hub==0.30.2
+safetensors==0.4.4
+
+# Scientific Computing
+numpy>=1.26.0
+scipy==1.14.1
+einops==0.8.0
+pandas==2.2.2
+
+# Computer Vision & Image Processing
+opencv-python==4.10.0.84
+imageio==2.36.0
+scikit-image==0.24.0
+rembg==2.0.65
+# realesrgan and basicsr rely on GPU, not supported on macOS for now
+
+# 3D Mesh Processing
+trimesh==4.4.7
+pymeshlab==2023.12.post3
+pygltflib==1.16.3
+open3d>=0.18.0 # May require Apple Silicon specific version
+
+# Configuration Management
+omegaconf==2.3.0
+pyyaml==6.0.2
+configargparse==1.7
+
+# Web Framework (for demo)
+gradio==5.33.0
+fastapi==0.115.12
+uvicorn==0.34.3
+
+# Utilities
+tqdm==4.66.5
+psutil==6.0.0
+
+# ONNX Runtime
+onnxruntime>=1.17.0
+torchmetrics==1.6.0
+
+pydantic==2.10.6
+
+timm
+pythreejs
+torchdiffeq
