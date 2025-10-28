@@ -15,17 +15,18 @@
 from PIL import Image
 from hy3dshape.rembg import BackgroundRemover
 from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
+from hy3dshape.rmbg import RMBG
 
 model_path = 'tencent/Hunyuan3D-2.1'
 pipeline_shapegen = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(model_path)
 
-image_path = 'demos/demo.png'
+image_path = 'demos/demo3.png'
 
-image = Image.open(image_path).convert("RGBA")
-if image.mode == 'RGB':
-    rembg = BackgroundRemover()
-    image = rembg(image)
+image = Image.open(image_path)
+# rembg = BackgroundRemover()
+rmbg = RMBG()
+image = rmbg(image)
+# image.save('demos/demo2_rembg.png')
 
-image = image_path
 mesh = pipeline_shapegen(image=image)[0]
-mesh.export('demo.glb')
+mesh.export('demo3_rembg.glb')
