@@ -39,6 +39,8 @@
   - ComfyUI-Hunyuan3d-2-1: https://github.com/visualbruno/ComfyUI-Hunyuan3d-2-1
 2. By [@VR-Jobs](https://github.com/VR-Jobs)
   - Hunyuan3d-2-1 Unity Support: https://github.com/VR-Jobs/Hunyuan3D-2.1-Unity-XR-PC-Phone
+3. By [@tianyu1412](https://github.com/tianyu1412)
+  - Hunyuan3d-2.1 ComfyUI Quick Start on CNB: https://cnb.cool/tencent/hunyuan/examples/Hunyuan3D-2.1-ComfyUI-on-CNB
 
 ## ☯️ **Hunyuan3D 2.1**
 
