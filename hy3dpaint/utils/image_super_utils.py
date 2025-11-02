@@ -34,8 +34,18 @@ class imageSuperNet:
             gpu_id=None,
         )
         self.upsampler = upsampler
+        self.output_size = config.realesrgan_output_size
 
     def __call__(self, image):
+        # Perform the initial 4x upscale (e.g., 512x512 -> 2048x2048)
         output, _ = self.upsampler.enhance(np.array(image))
-        output = Image.fromarray(output)
-        return output
+        
+        # Convert to PIL Image for resizing
+        output_image = Image.fromarray(output)
+
+        # If the upscaled image is not at the final target resolution, resize it.
+        # This handles cases where we need to go from 2048 -> 4096 for 4K textures.
+        if output_image.size[0] != self.output_size:
+            output_image = output_image.resize((self.output_size, self.output_size), Image.LANCZOS)
+            
+        return output_image

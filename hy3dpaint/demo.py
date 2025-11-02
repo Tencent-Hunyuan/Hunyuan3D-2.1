@@ -31,5 +31,5 @@ if __name__ == "__main__":
 
     conf = Hunyuan3DPaintConfig(max_num_view, resolution)
     paint_pipeline = Hunyuan3DPaintPipeline(conf)
-    output_mesh_path = paint_pipeline(mesh_path="./assets/case_1/mesh.glb", image_path="./assets/case_1/image.png")
+    output_mesh_path = paint_pipeline(mesh_path="./assets/case_1/sedona_teak_chair.glb", image_path="./assets/case_1/sedona_teak_chair_front.jpeg")
     print(f"Output mesh path: {output_mesh_path}")
