@@ -135,6 +135,6 @@ def create_glb_with_pbr_materials(obj_path, textures_dict, output_path):
 
     # 9. 保存最终GLB
     gltf.save(output_path)
-    print(f"PBR GLB文件已保存: {output_path}")
+    print(f"PBR GLB file saved: {output_path}")
 
 
