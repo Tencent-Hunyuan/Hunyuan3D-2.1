@@ -45,6 +45,9 @@ gradio==5.33.0
 fastapi==0.115.12
 uvicorn==0.34.3
 
+# Cloud Storage
+boto3==1.35.0
+
 # Utilities
 tqdm==4.66.5
 psutil==6.0.0
