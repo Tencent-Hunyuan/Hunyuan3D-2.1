@@ -70,12 +70,12 @@ class ModelWorker:
                  mc_algo='mc',
                  enable_flashvdm=False,
                  compile=False,
-                 enable_spaces_upload=True,
-                 spaces_endpoint="https://sfo3.digitaloceanspaces.com",
-                 spaces_region="sfo3",
-                 spaces_secret_key="4rnRlbaiQSld/fJaoshTHdqyPu08b7EZ7YtpbxinJyg",
-                 spaces_access_key="DO002GUE632N7QEW7CBV",
-                 spaces_bucket="alpha-production-bucket"):
+                 enable_spaces_upload=False,
+                 spaces_endpoint=None,
+                 spaces_region=None,
+                 spaces_access_key=None,
+                 spaces_secret_key=None,
+                 spaces_bucket=None):
         """
         Initialize the model worker.
         
