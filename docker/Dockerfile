@@ -115,8 +115,8 @@ RUN apt-get install -y libxi6 libgconf-2-4 libxkbcommon-x11-0 libsm6 libxext6 li
 RUN echo "conda activate hunyuan3d21" >> ~/.bashrc
 SHELL ["/bin/bash", "--login", "-c"]
 
-#exposing 7860 port
-EXPOSE 7860
+#exposing 8081 port for API server
+EXPOSE 8081
 
 # Cleanup
 RUN rm -f /workspace/*.zip && \
@@ -127,4 +127,4 @@ RUN rm -f /workspace/*.zip && \
 # Set default command
 WORKDIR /workspace/Hunyuan3D-2.1
 RUN mkdir gradio_cache
-CMD ["python", "api_server.py"]
+CMD ["python", "api_server.py", "--host", "0.0.0.0", "--port", "8081"]
