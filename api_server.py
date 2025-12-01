@@ -212,7 +212,6 @@ if __name__ == "__main__":
     SAVE_DIR = args.cache_path
     os.makedirs(SAVE_DIR, exist_ok=True)
     
-
     model_semaphore = asyncio.Semaphore(args.limit_model_concurrency)
 
     worker = ModelWorker(

@@ -26,7 +26,7 @@ class GenerationRequest(BaseModel):
         ge=0,
         le=2**32-1
     )
-    octree_resolution: int = Field(
+    octree_resolution: int = Field( # Can be changed 
         256,
         description="Resolution of the octree for mesh generation",
         ge=64,
@@ -38,7 +38,7 @@ class GenerationRequest(BaseModel):
         ge=1,
         le=20
     )
-    guidance_scale: float = Field(
+    guidance_scale: float = Field( # Can be changed 
         5.0,
         description="Guidance scale for generation",
         ge=0.1,
@@ -50,7 +50,7 @@ class GenerationRequest(BaseModel):
         ge=1000,
         le=20000
     )
-    face_count: int = Field(
+    face_count: int = Field( # Can be changed 
         40000,
         description="Maximum number of faces for texture generation",
         ge=1000,
