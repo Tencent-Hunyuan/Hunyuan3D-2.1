@@ -50,7 +50,6 @@ logger = build_logger("controller", f"{SAVE_DIR}/controller.log")
 worker = None
 model_semaphore = None
 
-
 app = FastAPI(
     title=API_TITLE,
     description=API_DESCRIPTION,
@@ -174,7 +173,8 @@ async def status(uid: str):
     if os.path.exists(textured_file_path):
         try:
             base64_str = base64.b64encode(open(textured_file_path, 'rb').read()).decode()
-            response = {'status': 'completed', 'model_base64': base64_str}
+            base64_str_initial = base64.b64encode(open(initial_file_path, 'rb').read()).decode()
+            response = {'status': 'completed', 'model_base64': base64_str, 'model_base64_initial': base64_str_initial}
             return JSONResponse(response, status_code=200)
         except Exception as e:
             logger.error(f"Error reading file {textured_file_path}: {e}")

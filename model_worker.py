@@ -9,8 +9,6 @@ import trimesh
 from io import BytesIO
 from PIL import Image
 import torch
-import boto3
-from botocore.exceptions import ClientError
 
 # Apply torchvision compatibility fix before other imports
 import sys
@@ -69,13 +67,7 @@ class ModelWorker:
                  save_dir='gradio_cache',
                  mc_algo='mc',
                  enable_flashvdm=False,
-                 compile=False,
-                 enable_spaces_upload=False,
-                 spaces_endpoint=None,
-                 spaces_region=None,
-                 spaces_access_key=None,
-                 spaces_secret_key=None,
-                 spaces_bucket=None):
+                 compile=False):
         """
         Initialize the model worker.
         
@@ -87,12 +79,6 @@ class ModelWorker:
             worker_id (str): Unique identifier for this worker
             model_semaphore: Semaphore for controlling model concurrency
             save_dir (str): Directory to save generated files
-            enable_spaces_upload (bool): Enable DigitalOcean Spaces upload
-            spaces_endpoint (str): DigitalOcean Spaces endpoint URL (e.g., 'https://nyc3.digitaloceanspaces.com')
-            spaces_region (str): DigitalOcean Spaces region (e.g., 'nyc3')
-            spaces_access_key (str): DigitalOcean Spaces access key
-            spaces_secret_key (str): DigitalOcean Spaces secret key
-            spaces_bucket (str): DigitalOcean Spaces bucket name
         """
         self.model_path = model_path
         self.worker_id = worker_id or str(uuid.uuid4())[:6]
@@ -103,27 +89,6 @@ class ModelWorker:
         self.mc_algo = mc_algo
         self.enable_flashvdm = enable_flashvdm
         self.compile = compile
-        
-        # DigitalOcean Spaces configuration
-        self.enable_spaces_upload = enable_spaces_upload
-        self.spaces_bucket = spaces_bucket
-        self.s3_client = None
-        
-        if self.enable_spaces_upload:
-            # Initialize S3 client for DigitalOcean Spaces
-            try:
-                self.s3_client = boto3.client(
-                    's3',
-                    endpoint_url=spaces_endpoint or os.getenv('DO_SPACES_ENDPOINT'),
-                    region_name=spaces_region or os.getenv('DO_SPACES_REGION', 'nyc3'),
-                    aws_access_key_id=spaces_access_key or os.getenv('DO_SPACES_ACCESS_KEY'),
-                    aws_secret_access_key=spaces_secret_key or os.getenv('DO_SPACES_SECRET_KEY')
-                )
-                self.spaces_bucket = spaces_bucket or os.getenv('DO_SPACES_BUCKET')
-                logger.info(f"✓ DigitalOcean Spaces upload enabled - Bucket: {self.spaces_bucket}")
-            except Exception as e:
-                logger.error(f"✗ Failed to initialize DigitalOcean Spaces client: {e}")
-                self.enable_spaces_upload = False
         
         logger.info(f"Loading the model {model_path} on worker {self.worker_id} ...")
 
@@ -174,48 +139,6 @@ class ModelWorker:
             "speed": 1,
             "queue_length": self.get_queue_length(),
         }
-    
-    def upload_to_spaces(self, file_path, object_name=None):
-        """
-        Upload a file to DigitalOcean Spaces.
-        
-        Args:
-            file_path (str): Path to the file to upload
-            object_name (str): S3 object name. If not specified, file_path basename is used
-            
-        Returns:
-            str: Public URL of the uploaded file, or None if upload failed
-        """
-        if not self.enable_spaces_upload or not self.s3_client:
-            logger.warning("DigitalOcean Spaces upload is not enabled")
-            return None
-            
-        if object_name is None:
-            object_name = os.path.basename(file_path)
-        
-        try:
-            # Upload the file with public-read ACL
-            logger.info(f"Uploading {file_path} to Spaces as {object_name}...")
-            self.s3_client.upload_file(
-                file_path,
-                self.spaces_bucket,
-                object_name,
-                ExtraArgs={'ACL': 'public-read'}
-            )
-            
-            # Construct the public URL
-            endpoint = self.s3_client.meta.endpoint_url
-            public_url = f"{endpoint}/{self.spaces_bucket}/{object_name}"
-            
-            logger.info(f"✓ Successfully uploaded to: {public_url}")
-            return public_url
-            
-        except ClientError as e:
-            logger.error(f"✗ Failed to upload {file_path} to DigitalOcean Spaces: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"✗ Unexpected error during upload: {e}")
-            return None
 
     @torch.inference_mode()
     def generate(self, uid, params):
