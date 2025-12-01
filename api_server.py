@@ -174,7 +174,7 @@ async def status(uid: str):
         try:
             base64_str = base64.b64encode(open(textured_file_path, 'rb').read()).decode()
             base64_str_initial = base64.b64encode(open(initial_file_path, 'rb').read()).decode()
-            response = {'status': 'completed', 'model_base64': base64_str, 'model_base64_initial': base64_str_initial}
+            response = {'status': 'completed', 'model_base64': base64_str, 'initial_model_base64': base64_str_initial}
             return JSONResponse(response, status_code=200)
         except Exception as e:
             logger.error(f"Error reading file {textured_file_path}: {e}")

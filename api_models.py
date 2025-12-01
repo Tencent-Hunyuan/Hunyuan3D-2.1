@@ -126,6 +126,10 @@ class StatusResponse(BaseModel):
         None, 
         description="Base64 encoded generated model file (only when status is 'completed')"
     )
+    initial_model_base64: Optional[str] = Field(
+        None, 
+        description="Base64 encoded initial model file (only when status is 'completed')"
+    )
     message: Optional[str] = Field(
         None,
         description="Error message (only when status is 'error')"
