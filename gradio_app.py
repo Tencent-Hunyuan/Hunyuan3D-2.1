@@ -452,13 +452,13 @@ def shape_generation(
 
 
 def build_app():
-    title = 'Hunyuan3D-2: High Resolution Textured 3D Assets Generation'
+    title = 'Introducing Alpha 2.0 Image to 3D Generation'
     if MV_MODE:
-        title = 'Hunyuan3D-2mv: Image to 3D Generation with 1-4 Views'
+        title = 'Alpha3D-2-mv: Image to 3D Generation with 1-4 Views'
     if 'mini' in args.subfolder:
-        title = 'Hunyuan3D-2mini: Strong 0.6B Image to Shape Generator'
+        title = 'Alpha3D-2mini: Strong 0.6B Image to Shape Generator'
 
-    title = 'Hunyuan-3D-2.1'
+    title = 'Alpha3D-2'
         
     if TURBO_MODE:
         title = title.replace(':', '-Turbo: Fast ')
@@ -469,7 +469,7 @@ def build_app():
     {title}
     </div>
     <div align="center">
-    Tencent Hunyuan3D Team
+    Alpha Intelligence Team
     </div>
     """
     custom_css = """
@@ -486,7 +486,7 @@ def build_app():
 
     """
 
-    with gr.Blocks(theme=gr.themes.Base(), title='Hunyuan-3D-2.1', analytics_enabled=False, css=custom_css) as demo:
+    with gr.Blocks(theme=gr.themes.Base(), title='Alpha3d 2.0', analytics_enabled=False, css=custom_css) as demo:
         gr.HTML(title_html)
 
         with gr.Row():
@@ -624,8 +624,9 @@ Fast for very complex cases, Standard seldom use.',
             ],
             outputs=[file_out, html_gen_mesh, stats, seed]
         ).then(
-            lambda: (gr.update(visible=False, value=False), gr.update(interactive=True), gr.update(interactive=True),
-                     gr.update(interactive=False)),
+            lambda file_path: (gr.update(visible=False, value=False), gr.update(interactive=True), gr.update(interactive=True),
+                     gr.update(value=file_path, interactive=True)),
+            inputs=[file_out],
             outputs=[export_texture, reduce_face, confirm_export, file_export],
         ).then(
             lambda: gr.update(selected='gen_mesh_panel'),
@@ -651,8 +652,9 @@ Fast for very complex cases, Standard seldom use.',
             ],
             outputs=[file_out, file_out2, html_gen_mesh, stats, seed]
         ).then(
-            lambda: (gr.update(visible=True, value=True), gr.update(interactive=False), gr.update(interactive=True),
-                     gr.update(interactive=False)),
+            lambda file_path: (gr.update(visible=True, value=True), gr.update(interactive=False), gr.update(interactive=True),
+                     gr.update(value=file_path, interactive=True)),
+            inputs=[file_out2],
             outputs=[export_texture, reduce_face, confirm_export, file_export],
         ).then(
             lambda: gr.update(selected='gen_mesh_panel'),
@@ -754,6 +756,7 @@ if __name__ == '__main__':
 
     CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
     MV_MODE = 'mv' in args.model_path
+    # MV_MODE = True
     TURBO_MODE = 'turbo' in args.subfolder
 
     HTML_HEIGHT = 690 if MV_MODE else 650
@@ -761,7 +764,7 @@ if __name__ == '__main__':
     HTML_OUTPUT_PLACEHOLDER = f"""
     <div style='height: {650}px; width: 100%; border-radius: 8px; border-color: #e5e7eb; border-style: solid; border-width: 1px; display: flex; justify-content: center; align-items: center;'>
       <div style='text-align: center; font-size: 16px; color: #6b7280;'>
-        <p style="color: #8d8d8d;">Welcome to Hunyuan3D!</p>
+        <p style="color: #8d8d8d;">Welcone to Alpha 2.0 powered by Alpha Intelligence</p>
         <p style="color: #8d8d8d;">No mesh here.</p>
       </div>
     </div>

@@ -50,7 +50,6 @@ logger = build_logger("controller", f"{SAVE_DIR}/controller.log")
 worker = None
 model_semaphore = None
 
-
 app = FastAPI(
     title=API_TITLE,
     description=API_DESCRIPTION,
@@ -171,13 +170,14 @@ async def status(uid: str):
     #print(f"Checking files: {textured_file_path} ({os.path.exists(textured_file_path)}), {initial_file_path} ({os.path.exists(initial_file_path)})")
     
     # If textured file exists, generation is complete
-    if os.path.exists(textured_file_path):
+    if os.path.exists(textured_file_path) and os.path.exists(initial_file_path):
         try:
             base64_str = base64.b64encode(open(textured_file_path, 'rb').read()).decode()
-            response = {'status': 'completed', 'model_base64': base64_str}
+            base64_str_initial = base64.b64encode(open(initial_file_path, 'rb').read()).decode()
+            response = {'status': 'completed', 'model_base64': base64_str, 'initial_model_base64': base64_str_initial}
             return JSONResponse(response, status_code=200)
         except Exception as e:
-            logger.error(f"Error reading file {textured_file_path}: {e}")
+            logger.error(f"{e}")
             response = {'status': 'error', 'message': 'Failed to read generated file'}
             return JSONResponse(response, status_code=500)
     
@@ -212,7 +212,6 @@ if __name__ == "__main__":
     SAVE_DIR = args.cache_path
     os.makedirs(SAVE_DIR, exist_ok=True)
     
-
     model_semaphore = asyncio.Semaphore(args.limit_model_concurrency)
 
     worker = ModelWorker(
