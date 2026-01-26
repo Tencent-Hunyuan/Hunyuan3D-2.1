@@ -33,5 +33,5 @@ def mesh_simplify_trimesh(inputpath, outputpath, target_count=40000):
     face_num = courent.faces.shape[0]
 
     if face_num > target_count:
-        courent = courent.simplify_quadric_decimation(target_count)
+        courent = courent.simplify_quadric_decimation(face_count=target_count)
     courent.export(outputpath)

@@ -1,0 +1,74 @@
+# Requirements for Hunyuan3D-2.1 on NVIDIA DGX Spark
+# GB10 GPU (Blackwell sm_121), CUDA 13.0, aarch64, Python 3.12
+#
+# IMPORTANT: Install PyTorch FIRST with CUDA 13.0 support:
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
+#
+# Then install this file:
+#   pip install -r requirements_dgx_spark.txt
+
+# Build Tools
+ninja
+pybind11
+
+# Core ML/Deep Learning
+transformers
+diffusers
+accelerate
+pytorch-lightning
+huggingface-hub
+safetensors
+
+# Scientific Computing
+numpy
+scipy
+einops
+pandas
+
+# Computer Vision & Image Processing
+opencv-python
+imageio
+scikit-image
+rembg
+basicsr
+realesrgan
+
+# 3D Mesh Processing
+trimesh
+fast-simplification
+pillow
+pygltflib
+xatlas
+pymeshlab
+# open3d - NOT AVAILABLE for aarch64, but not used in codebase
+
+# Configuration Management
+omegaconf
+pyyaml
+configargparse
+
+# Web Framework (for demo/gradio_app)
+gradio
+fastapi
+uvicorn
+
+# Utilities
+tqdm
+psutil
+pydantic
+
+# GPU Computing - CUDA 13.x for DGX Spark
+cupy-cuda13x
+
+# ONNX Runtime
+onnxruntime
+
+# Additional ML
+timm
+torchmetrics
+torchdiffeq
+
+# Optional (may have issues on aarch64)
+# pythreejs
+# deepspeed
+# bpy - not on PyPI, Blender integration only
