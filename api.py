@@ -294,3 +294,62 @@ def convert_image_to_3d(file: UploadFile = File(...)) -> FileResponse:
         filename=filename,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.get("/outputs")
+def list_outputs() -> dict[str, list[str]]:
+    """List all stored GLB files in the outputs directory.
+
+    Returns:
+        Dictionary with 'files' key containing list of filenames
+    """
+    outputs_dir = "outputs"
+    if not os.path.exists(outputs_dir):
+        return {"files": []}
+
+    files: list[str] = []
+    for entry in os.listdir(outputs_dir):
+        entry_path = os.path.join(outputs_dir, entry)
+        if os.path.isdir(entry_path):
+            # Look for GLB files in subdirectories
+            for file in os.listdir(entry_path):
+                if file.endswith(".glb"):
+                    # Return relative path from outputs/
+                    files.append(os.path.join(entry, file))
+        elif entry.endswith(".glb"):
+            files.append(entry)
+
+    return {"files": sorted(files)}
+
+
+@app.get("/outputs/{filename:path}")
+def get_output_file(filename: str) -> FileResponse:
+    """Download a stored GLB file.
+
+    Args:
+        filename: The filename or path to download (e.g., 'myimage_20241225_123456/myimage_textured.glb')
+
+    Returns:
+        The GLB file
+
+    Raises:
+        HTTPException: 404 if file not found
+    """
+    outputs_dir = "outputs"
+    file_path = os.path.join(outputs_dir, filename)
+
+    # Security: ensure the path doesn't escape outputs directory
+    abs_outputs = os.path.abspath(outputs_dir)
+    abs_file = os.path.abspath(file_path)
+    if not abs_file.startswith(abs_outputs):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if not os.path.exists(file_path) or not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(
+        path=file_path,
+        media_type="application/octet-stream",
+        filename=os.path.basename(filename),
+        headers={"Content-Disposition": f'attachment; filename="{os.path.basename(filename)}"'},
+    )

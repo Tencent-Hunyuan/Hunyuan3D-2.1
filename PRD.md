@@ -52,11 +52,11 @@ Create a FastAPI endpoint that converts a single image into a textured 3D GLB mo
 **Description:** As an API user, I want generated GLB files stored permanently so that I can download them later.
 
 **Acceptance Criteria:**
-- [ ] Generated files saved to `outputs/` directory with unique timestamp-based names
-- [ ] Add GET `/outputs/{filename}` endpoint to download stored files
-- [ ] Add GET `/outputs` endpoint to list all stored files
-- [ ] Returns 404 if file not found
-- [ ] Typecheck passes
+- [x] Generated files saved to `outputs/` directory with unique timestamp-based names
+- [x] Add GET `/outputs/{filename}` endpoint to download stored files
+- [x] Add GET `/outputs` endpoint to list all stored files
+- [x] Returns 404 if file not found
+- [x] Typecheck passes
 
 ### US-005: Add error handling and logging
 **Description:** As a developer, I want proper error handling and logging so that I can diagnose issues in production.
