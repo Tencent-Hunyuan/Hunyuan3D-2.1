@@ -27,13 +27,13 @@ Create a FastAPI endpoint that converts a single image into a textured 3D GLB mo
 **Description:** As a system operator, I want the ML pipelines to load only when needed and unload after 1 hour of inactivity so that GPU memory is not wasted.
 
 **Acceptance Criteria:**
-- [ ] Create `PipelineManager` class that lazily loads shape and texture pipelines
-- [ ] Track last usage timestamp
-- [ ] Background task checks every 5 minutes and unloads if inactive for 1 hour
-- [ ] `get_pipelines()` method returns loaded pipelines, loading them if needed
-- [ ] `unload()` method frees GPU memory (del pipelines, gc.collect, torch.cuda.empty_cache)
-- [ ] Thread-safe access to pipelines (use threading.Lock)
-- [ ] Typecheck passes
+- [x] Create `PipelineManager` class that lazily loads shape and texture pipelines
+- [x] Track last usage timestamp
+- [x] Background task checks every 5 minutes and unloads if inactive for 1 hour
+- [x] `get_pipelines()` method returns loaded pipelines, loading them if needed
+- [x] `unload()` method frees GPU memory (del pipelines, gc.collect, torch.cuda.empty_cache)
+- [x] Thread-safe access to pipelines (use threading.Lock)
+- [x] Typecheck passes
 
 ### US-003: Implement image-to-GLB conversion endpoint
 **Description:** As an API user, I want to upload an image and receive a textured GLB file so that I can use 3D models in my application.
