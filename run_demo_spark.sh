@@ -17,4 +17,4 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # Suppress the sm_121 capability warning (it's safe to ignore)
 export TORCH_CPP_LOG_LEVEL=ERROR
 
-python demo.py
+python demo.py "$@"
