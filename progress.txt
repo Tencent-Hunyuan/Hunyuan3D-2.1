@@ -15,3 +15,26 @@
   - Use `--ignore-missing-imports` flag with mypy
   - Test uvicorn by starting server briefly and curling endpoint
 ---
+
+## Iteration 2 - US-002: Implement pipeline manager with lazy loading
+- What was implemented: PipelineManager class with lazy loading, automatic unloading, thread safety
+- Files changed: api.py (modified), PRD.md (updated)
+- Learnings for future iterations:
+  - Pipeline loading code is in demo.py lines 150-166
+  - Use `sys.path.insert(0, './hy3dshape')` and `sys.path.insert(0, './hy3dpaint')` for imports
+  - Use FastAPI lifespan context manager for startup/shutdown hooks
+  - threading.Event.wait() with timeout is cleaner than time.sleep() for interruptible waits
+  - Use `Any` type alias for complex ML pipeline types to avoid import issues in type hints
+---
+
+## Iteration 3 - US-003: Implement image-to-GLB conversion endpoint
+- What was implemented: POST /convert-image-to-3d endpoint with file upload validation, image processing through shape and texture pipelines, and GLB file response
+- Files changed: api.py (modified), PRD.md (updated)
+- Learnings for future iterations:
+  - Image processing logic adapted from demo.py process_image() function (lines 58-143)
+  - Use ALLOWED_EXTENSIONS set for validation (png, jpg, jpeg, webp)
+  - FileResponse with proper media_type and Content-Disposition header for file downloads
+  - When using PIL Image.open(), need to handle type difference between ImageFile and Image.Image
+  - Files saved to outputs/ directory with timestamp-based naming
+  - Cleanup intermediate files (untextured GLB, OBJ, MTL, textures) after processing
+---

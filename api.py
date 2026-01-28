@@ -5,13 +5,20 @@ sys.path.insert(0, './hy3dshape')
 sys.path.insert(0, './hy3dpaint')
 
 import gc
+import glob
+import os
+import tempfile
 import threading
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any
 
 import torch
-from fastapi import FastAPI
+import trimesh
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from PIL import Image
 
 # Type aliases for the pipelines (actual types are complex)
 ShapePipeline = Any
@@ -153,7 +160,137 @@ app = FastAPI(
 )
 
 
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
+
+
 @app.get("/health")
 def health_check() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+def _get_file_extension(filename: str) -> str:
+    """Get lowercase file extension without the dot."""
+    return os.path.splitext(filename)[1].lower().lstrip(".")
+
+
+def _process_image_to_glb(
+    image_path: str,
+    shape_pipeline: ShapePipeline,
+    texture_pipeline: TexturePipeline,
+    rembg: BackgroundRemoverType,
+) -> str:
+    """Process an image through the 3D generation pipeline.
+
+    Args:
+        image_path: Path to the input image file
+        shape_pipeline: Shape generation pipeline
+        texture_pipeline: Texture generation pipeline
+        rembg: Background remover
+
+    Returns:
+        Path to the generated textured GLB file
+    """
+    # Generate timestamped output directory
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    input_name = os.path.splitext(os.path.basename(image_path))[0]
+    output_dir = os.path.join("outputs", f"{input_name}_{timestamp}")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Output paths
+    output_glb = os.path.join(output_dir, f"{input_name}.glb")
+    output_textured_obj = os.path.join(output_dir, f"{input_name}_textured.obj")
+    output_textured_glb = os.path.join(output_dir, f"{input_name}_textured.glb")
+
+    # Image preprocessing
+    loaded_image = Image.open(image_path)
+    if loaded_image.mode == "RGB":
+        image: Image.Image = rembg(loaded_image)
+    else:
+        image = loaded_image.convert("RGBA")
+
+    # Shape generation
+    mesh = shape_pipeline(image=image)[0]
+    mesh.export(output_glb)
+
+    # Texture generation
+    output_mesh_path = texture_pipeline(
+        mesh_path=output_glb,
+        image_path=image,
+        output_mesh_path=output_textured_obj,
+        save_glb=False,
+    )
+
+    # Convert to GLB with trimesh
+    mesh_textured = trimesh.load(output_mesh_path, force="mesh")
+    mesh_textured.export(output_textured_glb)
+
+    # Clean up intermediate files
+    cleanup_patterns = [
+        output_glb,
+        output_textured_obj,
+        output_mesh_path.replace(".obj", ".mtl"),
+        output_mesh_path.replace(".obj", ".jpg"),
+        output_mesh_path.replace(".obj", "_metallic.jpg"),
+        output_mesh_path.replace(".obj", "_roughness.jpg"),
+        os.path.join(output_dir, "white_mesh_remesh.obj"),
+    ]
+    for pattern in cleanup_patterns:
+        for file in glob.glob(pattern):
+            if os.path.exists(file):
+                os.remove(file)
+
+    return output_textured_glb
+
+
+@app.post("/convert-image-to-3d")
+def convert_image_to_3d(file: UploadFile = File(...)) -> FileResponse:
+    """Convert an uploaded image to a textured 3D GLB model.
+
+    Args:
+        file: The image file to convert (png, jpg, jpeg, webp)
+
+    Returns:
+        The generated GLB file
+
+    Raises:
+        HTTPException: 400 if file type is invalid
+    """
+    # Validate file type
+    if file.filename is None:
+        raise HTTPException(status_code=400, detail="Filename is required")
+
+    extension = _get_file_extension(file.filename)
+    if extension not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type: {extension}. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
+        )
+
+    # Save uploaded file to temp location
+    with tempfile.NamedTemporaryFile(
+        suffix=f".{extension}", delete=False
+    ) as temp_file:
+        temp_path = temp_file.name
+        content = file.file.read()
+        temp_file.write(content)
+
+    try:
+        # Get pipelines and process
+        shape_pipeline, texture_pipeline, rembg = pipeline_manager.get_pipelines()
+        output_path = _process_image_to_glb(
+            temp_path, shape_pipeline, texture_pipeline, rembg
+        )
+    finally:
+        # Clean up temp file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+    # Return the GLB file
+    filename = os.path.basename(output_path)
+    return FileResponse(
+        path=output_path,
+        media_type="application/octet-stream",
+        filename=filename,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

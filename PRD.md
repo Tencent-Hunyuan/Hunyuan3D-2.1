@@ -39,14 +39,14 @@ Create a FastAPI endpoint that converts a single image into a textured 3D GLB mo
 **Description:** As an API user, I want to upload an image and receive a textured GLB file so that I can use 3D models in my application.
 
 **Acceptance Criteria:**
-- [ ] POST `/convert-image-to-3d` endpoint accepts multipart file upload
-- [ ] Validates file is an image (png, jpg, jpeg, webp)
-- [ ] Returns 400 error for invalid file types
-- [ ] Processes image through shape generation pipeline
-- [ ] Processes mesh through texture generation pipeline
-- [ ] Returns GLB file with `application/octet-stream` content type
-- [ ] Returns appropriate filename in Content-Disposition header
-- [ ] Typecheck passes
+- [x] POST `/convert-image-to-3d` endpoint accepts multipart file upload
+- [x] Validates file is an image (png, jpg, jpeg, webp)
+- [x] Returns 400 error for invalid file types
+- [x] Processes image through shape generation pipeline
+- [x] Processes mesh through texture generation pipeline
+- [x] Returns GLB file with `application/octet-stream` content type
+- [x] Returns appropriate filename in Content-Disposition header
+- [x] Typecheck passes
 
 ### US-004: Add permanent file storage
 **Description:** As an API user, I want generated GLB files stored permanently so that I can download them later.
