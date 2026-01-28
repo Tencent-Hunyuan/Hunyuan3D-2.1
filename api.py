@@ -219,12 +219,13 @@ def _process_image_to_glb(
     output_textured_obj = os.path.join(output_dir, f"{input_name}_textured.obj")
     output_textured_glb = os.path.join(output_dir, f"{input_name}_textured.glb")
 
-    # Image preprocessing
+    # Image preprocessing - always apply background removal
     loaded_image = Image.open(image_path)
-    if loaded_image.mode == "RGB":
-        image: Image.Image = rembg(loaded_image)
-    else:
-        image = loaded_image.convert("RGBA")
+    if loaded_image.mode != "RGB":
+        loaded_image = loaded_image.convert("RGB")
+    logger.info("Applying background removal...")
+    image: Image.Image = rembg(loaded_image)
+    logger.info("Background removal complete")
 
     # Shape generation
     mesh = shape_pipeline(image=image)[0]
@@ -260,7 +261,7 @@ def _process_image_to_glb(
     return output_textured_glb
 
 
-@app.post("/convert-image-to-3d")
+@app.post("/convert-image-to-3d", response_model=None)
 def convert_image_to_3d(file: UploadFile = File(...)) -> FileResponse | JSONResponse:
     """Convert an uploaded image to a textured 3D GLB model.
 

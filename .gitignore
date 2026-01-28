@@ -184,3 +184,5 @@ white_mesh_remesh.obj
 hy3dpaint/ckpt/
 
 save_dir/
+assets/example_images/Benchmark/*
+outputs/*
