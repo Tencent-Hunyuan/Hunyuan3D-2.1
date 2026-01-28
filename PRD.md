@@ -62,11 +62,11 @@ Create a FastAPI endpoint that converts a single image into a textured 3D GLB mo
 **Description:** As a developer, I want proper error handling and logging so that I can diagnose issues in production.
 
 **Acceptance Criteria:**
-- [ ] Conversion errors return 500 with error message in JSON
-- [ ] Log pipeline load/unload events
-- [ ] Log each conversion request with input filename and processing time
-- [ ] Log errors with stack traces
-- [ ] Typecheck passes
+- [x] Conversion errors return 500 with error message in JSON
+- [x] Log pipeline load/unload events
+- [x] Log each conversion request with input filename and processing time
+- [x] Log errors with stack traces
+- [x] Typecheck passes
 
 ## Non-Goals
 

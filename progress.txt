@@ -38,3 +38,25 @@
   - Files saved to outputs/ directory with timestamp-based naming
   - Cleanup intermediate files (untextured GLB, OBJ, MTL, textures) after processing
 ---
+
+## Iteration 4 - US-004: Add permanent file storage
+- What was implemented: GET /outputs endpoint to list stored GLB files, GET /outputs/{filename} endpoint to download files
+- Files changed: api.py (modified), PRD.md (updated)
+- Learnings for future iterations:
+  - Use `{filename:path}` in FastAPI route to allow slashes in the filename parameter
+  - Always include path traversal protection when serving files from a directory
+  - Files are stored in subdirectories like `outputs/{name}_{timestamp}/{name}_textured.glb`
+  - The list endpoint returns relative paths from outputs/ directory
+---
+
+## Iteration 5 - US-005: Add error handling and logging
+- What was implemented: Comprehensive logging and error handling for the API
+- Files changed: api.py (modified), PRD.md (updated)
+- Learnings for future iterations:
+  - Use `logging.basicConfig()` with format string for consistent log output
+  - Named logger (e.g., `logging.getLogger("hunyuan3d-api")`) helps filter logs in production
+  - Return `JSONResponse` with status_code=500 for conversion errors instead of raising HTTPException
+  - Use `traceback.format_exc()` to get full stack trace for error logging
+  - Track processing time with `time.time()` before and after operations
+  - Log both start and completion/failure of conversion requests with filename and duration
+---

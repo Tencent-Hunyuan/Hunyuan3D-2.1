@@ -6,19 +6,28 @@ sys.path.insert(0, './hy3dpaint')
 
 import gc
 import glob
+import logging
 import os
 import tempfile
 import threading
 import time
+import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
 import torch
 import trimesh
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from PIL import Image
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger("hunyuan3d-api")
 
 # Type aliases for the pipelines (actual types are complex)
 ShapePipeline = Any
@@ -47,6 +56,8 @@ class PipelineManager:
         from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
         from textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
 
+        logger.info("Loading ML pipelines...")
+
         # Apply torchvision fix if available
         try:
             from torchvision_fix import apply_fix
@@ -57,11 +68,13 @@ class PipelineManager:
             pass
 
         # Load shape generation pipeline
+        logger.info("Loading shape generation pipeline...")
         model_path = 'tencent/Hunyuan3D-2.1'
         self._shape_pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(model_path)
         self._rembg = BackgroundRemover()
 
         # Load texture generation pipeline
+        logger.info("Loading texture generation pipeline...")
         max_num_view = 4
         resolution = 512
         conf = Hunyuan3DPaintConfig(max_num_view, resolution)
@@ -69,6 +82,8 @@ class PipelineManager:
         conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
         conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
         self._texture_pipeline = Hunyuan3DPaintPipeline(conf)
+
+        logger.info("ML pipelines loaded successfully")
 
     def get_pipelines(self) -> tuple[ShapePipeline, TexturePipeline, BackgroundRemoverType]:
         """Get the ML pipelines, loading them if needed.
@@ -86,6 +101,7 @@ class PipelineManager:
         """Unload pipelines and free GPU memory."""
         with self._lock:
             if self._shape_pipeline is not None:
+                logger.info("Unloading ML pipelines due to inactivity...")
                 del self._shape_pipeline
                 self._shape_pipeline = None
             if self._texture_pipeline is not None:
@@ -98,6 +114,7 @@ class PipelineManager:
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            logger.info("ML pipelines unloaded, GPU memory freed")
 
     def _checker_loop(self) -> None:
         """Background thread that checks for inactivity and unloads pipelines."""
@@ -244,7 +261,7 @@ def _process_image_to_glb(
 
 
 @app.post("/convert-image-to-3d")
-def convert_image_to_3d(file: UploadFile = File(...)) -> FileResponse:
+def convert_image_to_3d(file: UploadFile = File(...)) -> FileResponse | JSONResponse:
     """Convert an uploaded image to a textured 3D GLB model.
 
     Args:
@@ -267,6 +284,10 @@ def convert_image_to_3d(file: UploadFile = File(...)) -> FileResponse:
             detail=f"Invalid file type: {extension}. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
         )
 
+    input_filename = file.filename
+    logger.info("Received conversion request for file: %s", input_filename)
+    start_time = time.time()
+
     # Save uploaded file to temp location
     with tempfile.NamedTemporaryFile(
         suffix=f".{extension}", delete=False
@@ -280,6 +301,24 @@ def convert_image_to_3d(file: UploadFile = File(...)) -> FileResponse:
         shape_pipeline, texture_pipeline, rembg = pipeline_manager.get_pipelines()
         output_path = _process_image_to_glb(
             temp_path, shape_pipeline, texture_pipeline, rembg
+        )
+        processing_time = time.time() - start_time
+        logger.info(
+            "Conversion completed for file: %s in %.2f seconds",
+            input_filename,
+            processing_time,
+        )
+    except Exception as e:
+        processing_time = time.time() - start_time
+        logger.error(
+            "Conversion failed for file: %s after %.2f seconds",
+            input_filename,
+            processing_time,
+        )
+        logger.error("Error details:\n%s", traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Conversion failed: {str(e)}"},
         )
     finally:
         # Clean up temp file
