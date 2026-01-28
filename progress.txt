@@ -1,0 +1,17 @@
+# Progress Log
+
+## Learnings
+(Patterns discovered during implementation)
+- Use `python -m mypy api.py --ignore-missing-imports` for typechecking
+- FastAPI and uvicorn are already installed in the venv
+
+---
+
+## Iteration 1 - US-001: Create FastAPI application structure
+- What was implemented: Basic FastAPI app with /health endpoint
+- Files changed: api.py (created)
+- Learnings for future iterations:
+  - mypy needed to be installed (`pip install mypy`)
+  - Use `--ignore-missing-imports` flag with mypy
+  - Test uvicorn by starting server briefly and curling endpoint
+---
