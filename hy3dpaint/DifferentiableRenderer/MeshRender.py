@@ -353,8 +353,13 @@ class MeshRender:
             use_opengl: Whether to use OpenGL backend (deprecated)
             device: Computing device ("cuda" or "cpu")
         """
-
-        self.device = device
+        if torch.cuda.is_available():
+            if torch.version.cuda:
+                self.device = device
+            else:
+                self.device = "cpu"
+        else:
+            self.device = "cpu"
 
         self.set_default_render_resolution(default_resolution)
         self.set_default_texture_resolution(texture_size)
