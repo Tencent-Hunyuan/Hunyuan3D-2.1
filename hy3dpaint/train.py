@@ -157,7 +157,7 @@ class CodeSnapshot(Callback):
     def on_fit_start(self, trainer, pl_module):
         try:
             self.save_code_snapshot()
-        except:
+        except Exception:
             rank_zero_warn(
                 "Code snapshot is not saved. Please make sure you have git installed and are in a git repository."
             )
@@ -204,7 +204,7 @@ if __name__ == "__main__":
     rank_zero_print(f"Running on GPUs {opt.gpus}")
     try:
         ngpu = int(opt.gpus)
-    except:
+    except Exception:
         ngpu = len(opt.gpus.strip(",").split(","))
     trainer_config["devices"] = ngpu
 

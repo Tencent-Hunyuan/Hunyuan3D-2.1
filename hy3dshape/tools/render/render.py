@@ -234,7 +234,7 @@ def switch_to_color_render(output_nodes):
                 try:
                     node = bc_node.inputs[1].links[0].from_socket.node
                     node.image.colorspace_settings.name = 'sRGB'
-                except:
+                except Exception:
                     pass
 
 # def ConvertNormalMap(input_exr, output_jpg):

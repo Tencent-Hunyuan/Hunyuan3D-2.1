@@ -147,7 +147,7 @@ class DMCSurfaceExtractor(SurfaceExtractor):
             try:
                 from diso import DiffDMC
                 self.dmc = DiffDMC(dtype=torch.float32).to(device)
-            except:
+            except Exception:
                 raise ImportError("Please install diso via `pip install diso`, or set mc_algo to 'mc'")
         sdf = -grid_logit / octree_resolution
         sdf = sdf.to(torch.float32).contiguous()
