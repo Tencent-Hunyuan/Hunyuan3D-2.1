@@ -94,7 +94,7 @@ def sample_sdf(mesh, random_surface, sharp_surface):
             mesh.vertices, mesh.faces, 
             return_normals=False,
             sign_type=sign_type)
-    except:
+    except Exception:
         vol_sdf, I, C = igl.signed_distance(
             vol_points.astype(np.float32), 
             mesh.vertices, mesh.faces, 
@@ -105,7 +105,7 @@ def sample_sdf(mesh, random_surface, sharp_surface):
             mesh.vertices, mesh.faces, 
             return_normals=False,
             sign_type=sign_type)
-    except:
+    except Exception:
         random_near_sdf, I, C = igl.signed_distance(
             random_near_points.astype(np.float32), 
             mesh.vertices, mesh.faces, 
@@ -116,7 +116,7 @@ def sample_sdf(mesh, random_surface, sharp_surface):
             mesh.vertices, mesh.faces, 
             return_normals=False,
             sign_type=sign_type)
-    except:
+    except Exception:
         sharp_near_sdf, I, C = igl.signed_distance(
             sharp_near_points.astype(np.float32), 
             mesh.vertices, mesh.faces, 
