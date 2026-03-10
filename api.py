@@ -34,6 +34,53 @@ ShapePipeline = Any
 TexturePipeline = Any
 BackgroundRemoverType = Any
 
+# Preemption mode: when enabled, a new request cancels any in-progress request
+# so the latest request always runs in predictable time.
+DROP_PREVIOUS_REQUEST = os.getenv("DROP_PREVIOUS_REQUEST", "true").lower() in ("true", "1", "yes")
+
+
+class PreemptedError(Exception):
+    """Raised when a request is cancelled by a newer request."""
+    pass
+
+
+class PreemptionManager:
+    """Single-slot request manager that drops previous requests when a new one arrives.
+
+    Between pipeline stages, the processing code calls ``check()`` with its
+    cancel event.  If a newer request has arrived in the meantime, ``check()``
+    raises ``PreemptedError`` so the old request can exit quickly and release
+    the processing slot.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._processing = threading.Lock()
+        self._cancel = threading.Event()
+
+    def begin(self) -> threading.Event:
+        """Register a new request. Signals cancellation to any in-progress request
+        and blocks until the processing slot is free.
+
+        Returns the cancel event for this request (to pass into ``check``).
+        """
+        with self._lock:
+            self._cancel.set()  # tell current request to stop
+            self._cancel = threading.Event()
+            cancel = self._cancel
+        self._processing.acquire()
+        return cancel
+
+    def end(self) -> None:
+        """Release the processing slot."""
+        self._processing.release()
+
+    @staticmethod
+    def check(cancel: threading.Event) -> None:
+        """Raise ``PreemptedError`` if this request has been superseded."""
+        if cancel.is_set():
+            raise PreemptedError("Request preempted by a newer request")
+
 
 class PipelineManager:
     """Manages ML pipelines with lazy loading and automatic unloading after inactivity."""
@@ -157,6 +204,13 @@ class PipelineManager:
 # Global pipeline manager instance
 pipeline_manager = PipelineManager()
 
+# Global preemption manager (only used when DROP_PREVIOUS_REQUEST is enabled)
+preemption: PreemptionManager | None = PreemptionManager() if DROP_PREVIOUS_REQUEST else None
+if DROP_PREVIOUS_REQUEST:
+    logger.info("Preemption enabled: new requests will cancel in-progress requests")
+else:
+    logger.info("Preemption disabled: requests will queue normally")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
@@ -196,6 +250,7 @@ def _process_image_to_glb(
     shape_pipeline: ShapePipeline,
     texture_pipeline: TexturePipeline,
     rembg: BackgroundRemoverType,
+    cancel: threading.Event | None = None,
 ) -> str:
     """Process an image through the 3D generation pipeline.
 
@@ -204,10 +259,18 @@ def _process_image_to_glb(
         shape_pipeline: Shape generation pipeline
         texture_pipeline: Texture generation pipeline
         rembg: Background remover
+        cancel: Optional event; if set, this request has been preempted
 
     Returns:
         Path to the generated textured GLB file
+
+    Raises:
+        PreemptedError: If the request is cancelled between stages
     """
+    def _check() -> None:
+        if cancel is not None and cancel.is_set():
+            raise PreemptedError("Request preempted by a newer request")
+
     # Generate timestamped output directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     input_name = os.path.splitext(os.path.basename(image_path))[0]
@@ -227,9 +290,13 @@ def _process_image_to_glb(
     image: Image.Image = rembg(loaded_image)
     logger.info("Background removal complete")
 
+    _check()  # checkpoint: after rembg, before shape generation
+
     # Shape generation
     mesh = shape_pipeline(image=image)[0]
     mesh.export(output_glb)
+
+    _check()  # checkpoint: after shape generation, before texture generation
 
     # Texture generation
     output_mesh_path = texture_pipeline(
@@ -238,6 +305,8 @@ def _process_image_to_glb(
         output_mesh_path=output_textured_obj,
         save_glb=False,
     )
+
+    _check()  # checkpoint: after texture generation, before export
 
     # Convert to GLB with trimesh
     mesh_textured = trimesh.load(output_mesh_path, force="mesh")
@@ -297,17 +366,33 @@ def convert_image_to_3d(file: UploadFile = File(...)) -> FileResponse | JSONResp
         content = file.file.read()
         temp_file.write(content)
 
+    cancel: threading.Event | None = None
     try:
+        if preemption is not None:
+            cancel = preemption.begin()
+            preemption.check(cancel)
+
         # Get pipelines and process
         shape_pipeline, texture_pipeline, rembg = pipeline_manager.get_pipelines()
         output_path = _process_image_to_glb(
-            temp_path, shape_pipeline, texture_pipeline, rembg
+            temp_path, shape_pipeline, texture_pipeline, rembg, cancel
         )
         processing_time = time.time() - start_time
         logger.info(
             "Conversion completed for file: %s in %.2f seconds",
             input_filename,
             processing_time,
+        )
+    except PreemptedError:
+        processing_time = time.time() - start_time
+        logger.info(
+            "Conversion preempted for file: %s after %.2f seconds",
+            input_filename,
+            processing_time,
+        )
+        return JSONResponse(
+            status_code=409,
+            content={"error": "Request preempted by a newer request"},
         )
     except Exception as e:
         processing_time = time.time() - start_time
@@ -322,6 +407,8 @@ def convert_image_to_3d(file: UploadFile = File(...)) -> FileResponse | JSONResp
             content={"error": f"Conversion failed: {str(e)}"},
         )
     finally:
+        if preemption is not None and cancel is not None:
+            preemption.end()
         # Clean up temp file
         if os.path.exists(temp_path):
             os.remove(temp_path)
