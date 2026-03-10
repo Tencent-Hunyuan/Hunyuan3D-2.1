@@ -57,14 +57,19 @@ class PreemptionManager:
         self._processing = threading.Lock()
         self._cancel = threading.Event()
 
-    def begin(self) -> threading.Event:
-        """Register a new request. Signals cancellation to any in-progress request
-        and blocks until the processing slot is free.
+    def begin(self, cancel_previous: bool = True) -> threading.Event:
+        """Register a new request and acquire the processing slot.
+
+        Args:
+            cancel_previous: If True, signal cancellation to any in-progress
+                request so it exits at the next checkpoint (preempt mode).
+                If False, just wait in line for the slot (queue mode).
 
         Returns the cancel event for this request (to pass into ``check``).
         """
         with self._lock:
-            self._cancel.set()  # tell current request to stop
+            if cancel_previous:
+                self._cancel.set()  # tell current request to stop
             self._cancel = threading.Event()
             cancel = self._cancel
         self._processing.acquire()
@@ -390,15 +395,10 @@ def convert_image_to_3d(
 
     cancel: threading.Event | None = None
     try:
-        if cancel_previous:
-            # Preempt: cancel any in-progress request and take the slot
-            cancel = preemption.begin()
-            preemption.check(cancel)
-        else:
-            # Register a cancel event so /cancel endpoint can still stop us
-            with preemption._lock:
-                preemption._cancel = threading.Event()
-                cancel = preemption._cancel
+        # Always serialize through the processing lock to prevent concurrent
+        # GPU access (the scheduler has mutable state that is not thread-safe).
+        cancel = preemption.begin(cancel_previous=cancel_previous)
+        preemption.check(cancel)
 
         # Get pipelines and process
         shape_pipeline, texture_pipeline, rembg = pipeline_manager.get_pipelines()
@@ -435,7 +435,7 @@ def convert_image_to_3d(
             content={"error": f"Conversion failed: {str(e)}"},
         )
     finally:
-        if cancel_previous and cancel is not None:
+        if cancel is not None:
             preemption.end()
         # Clean up temp file
         if os.path.exists(temp_path):
