@@ -1,0 +1,57 @@
+# Hunyuan3D-2.1 API service for DGX Spark (GB10 / sm_121)
+# Uses NGC PyTorch base for native sm_121 kernel support
+FROM nvcr.io/nvidia/pytorch:26.02-py3
+
+LABEL name="hunyuan3d-api" maintainer="hunyuan3d"
+
+WORKDIR /workspace
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH
+ENV PYOPENGL_PLATFORM=egl
+
+# CUDA environment
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
+ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0;12.0;12.1"
+
+# System dependencies for OpenGL / mesh rendering
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libegl1-mesa-dev libglib2.0-0 \
+    pkg-config libglvnd0 libgl1 libglx0 libegl1 libgles2 \
+    libglvnd-dev libgl1-mesa-dev libegl1-mesa-dev libgles2-mesa-dev \
+    mesa-utils-extra libxrender1 \
+    libeigen3-dev libcgal-dev \
+    libxi6 libxkbcommon-x11-0 libsm6 libxext6 libxrender-dev \
+    libharfbuzz0b \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy source code
+COPY . /workspace/Hunyuan3D-2.1
+WORKDIR /workspace/Hunyuan3D-2.1
+
+# Install Python dependencies (NGC already has PyTorch with sm_121 support)
+RUN pip install --no-cache-dir -r requirements_dgx_spark.txt
+
+# Build custom_rasterizer (CUDA extension)
+RUN cd hy3dpaint/custom_rasterizer && \
+    TORCH_CUDA_ARCH_LIST="12.1" \
+    pip install --no-build-isolation -e .
+
+# Build DifferentiableRenderer (CUDA extension)
+RUN cd hy3dpaint/DifferentiableRenderer && \
+    bash compile_mesh_painter.sh
+
+# Download RealESRGAN weights
+RUN mkdir -p hy3dpaint/ckpt && \
+    wget -q https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth \
+    -P hy3dpaint/ckpt
+
+# Create outputs directory
+RUN mkdir -p outputs
+
+EXPOSE 8000
+
+CMD ["python3", "-m", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
