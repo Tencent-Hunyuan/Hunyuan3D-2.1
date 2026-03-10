@@ -18,7 +18,7 @@ from typing import Any
 
 import torch
 import trimesh
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from PIL import Image
 
@@ -34,23 +34,22 @@ ShapePipeline = Any
 TexturePipeline = Any
 BackgroundRemoverType = Any
 
-# Preemption mode: when enabled, a new request cancels any in-progress request
-# so the latest request always runs in predictable time.
-DROP_PREVIOUS_REQUEST = os.getenv("DROP_PREVIOUS_REQUEST", "true").lower() in ("true", "1", "yes")
-
-
 class PreemptedError(Exception):
-    """Raised when a request is cancelled by a newer request."""
+    """Raised when a request is cancelled."""
     pass
 
 
 class PreemptionManager:
-    """Single-slot request manager that drops previous requests when a new one arrives.
+    """Manages cancellation of in-progress generation requests.
+
+    Supports two modes:
+    - Explicit cancellation via the ``/cancel`` endpoint.
+    - Request preemption via ``cancel_previous=true`` on the conversion endpoint,
+      which cancels any in-progress request so the new one can start immediately.
 
     Between pipeline stages, the processing code calls ``check()`` with its
-    cancel event.  If a newer request has arrived in the meantime, ``check()``
-    raises ``PreemptedError`` so the old request can exit quickly and release
-    the processing slot.
+    cancel event.  If the event has been set, ``check()`` raises
+    ``PreemptedError`` so the request can exit quickly.
     """
 
     def __init__(self) -> None:
@@ -74,6 +73,15 @@ class PreemptionManager:
     def end(self) -> None:
         """Release the processing slot."""
         self._processing.release()
+
+    def cancel(self) -> bool:
+        """Cancel the current in-progress request, if any.
+
+        Returns True if a cancellation signal was sent, False if nothing was running.
+        """
+        with self._lock:
+            self._cancel.set()
+            return self._processing.locked()
 
     @staticmethod
     def check(cancel: threading.Event) -> None:
@@ -204,12 +212,8 @@ class PipelineManager:
 # Global pipeline manager instance
 pipeline_manager = PipelineManager()
 
-# Global preemption manager (only used when DROP_PREVIOUS_REQUEST is enabled)
-preemption: PreemptionManager | None = PreemptionManager() if DROP_PREVIOUS_REQUEST else None
-if DROP_PREVIOUS_REQUEST:
-    logger.info("Preemption enabled: new requests will cancel in-progress requests")
-else:
-    logger.info("Preemption disabled: requests will queue normally")
+# Global preemption manager for cancellation support
+preemption = PreemptionManager()
 
 
 @asynccontextmanager
@@ -238,6 +242,20 @@ ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 def health_check() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+@app.post("/cancel")
+def cancel_generation() -> dict[str, str]:
+    """Cancel the current in-progress generation, if any.
+
+    Uses the preemption mechanism to signal cancellation at the next checkpoint.
+    Returns 200 whether or not a generation was running.
+    """
+    cancelled = preemption.cancel()
+    if cancelled:
+        logger.info("Cancel requested for in-progress generation")
+        return {"status": "cancelled"}
+    return {"status": "idle", "message": "No generation in progress"}
 
 
 def _get_file_extension(filename: str) -> str:
@@ -331,11 +349,15 @@ def _process_image_to_glb(
 
 
 @app.post("/convert-image-to-3d", response_model=None)
-def convert_image_to_3d(file: UploadFile = File(...)) -> FileResponse | JSONResponse:
+def convert_image_to_3d(
+    file: UploadFile = File(...),
+    cancel_previous: bool = False,
+) -> FileResponse | JSONResponse:
     """Convert an uploaded image to a textured 3D GLB model.
 
     Args:
         file: The image file to convert (png, jpg, jpeg, webp)
+        cancel_previous: If true, cancel any in-progress generation before starting
 
     Returns:
         The generated GLB file
@@ -368,9 +390,15 @@ def convert_image_to_3d(file: UploadFile = File(...)) -> FileResponse | JSONResp
 
     cancel: threading.Event | None = None
     try:
-        if preemption is not None:
+        if cancel_previous:
+            # Preempt: cancel any in-progress request and take the slot
             cancel = preemption.begin()
             preemption.check(cancel)
+        else:
+            # Register a cancel event so /cancel endpoint can still stop us
+            with preemption._lock:
+                preemption._cancel = threading.Event()
+                cancel = preemption._cancel
 
         # Get pipelines and process
         shape_pipeline, texture_pipeline, rembg = pipeline_manager.get_pipelines()
@@ -386,13 +414,13 @@ def convert_image_to_3d(file: UploadFile = File(...)) -> FileResponse | JSONResp
     except PreemptedError:
         processing_time = time.time() - start_time
         logger.info(
-            "Conversion preempted for file: %s after %.2f seconds",
+            "Conversion cancelled for file: %s after %.2f seconds",
             input_filename,
             processing_time,
         )
         return JSONResponse(
             status_code=409,
-            content={"error": "Request preempted by a newer request"},
+            content={"error": "Request cancelled"},
         )
     except Exception as e:
         processing_time = time.time() - start_time
@@ -407,7 +435,7 @@ def convert_image_to_3d(file: UploadFile = File(...)) -> FileResponse | JSONResp
             content={"error": f"Conversion failed: {str(e)}"},
         )
     finally:
-        if preemption is not None and cancel is not None:
+        if cancel_previous and cancel is not None:
             preemption.end()
         # Clean up temp file
         if os.path.exists(temp_path):
