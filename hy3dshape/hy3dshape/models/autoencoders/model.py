@@ -209,11 +209,42 @@ class VectsetVAE(nn.Module):
         self.surface_extractor = surface_extractor
 
     def latents2mesh(self, latents: torch.FloatTensor, **kwargs):
+        check_cancel = kwargs.get('check_cancel')
         with synchronize_timer('Volume decoding'):
             grid_logits = self.volume_decoder(latents, self.geo_decoder, **kwargs)
+        if check_cancel is not None:
+            check_cancel()
         with synchronize_timer('Surface extraction'):
-            outputs = self.surface_extractor(grid_logits, **kwargs)
+            if check_cancel is not None:
+                outputs = self._cancellable_surface_extract(
+                    grid_logits, check_cancel, **kwargs
+                )
+            else:
+                outputs = self.surface_extractor(grid_logits, **kwargs)
         return outputs
+
+    def _cancellable_surface_extract(self, grid_logits, check_cancel, **kwargs):
+        """Run surface extraction in a thread, polling for cancellation.
+
+        ``measure.marching_cubes`` is a single blocking C call that can take
+        tens of seconds.  By running it in a thread we can poll ``check_cancel``
+        every 0.5 s and raise early.  The orphaned thread is CPU-only (the
+        grid has already been copied to host memory) so it is safe to let it
+        finish in the background without GPU contention.
+        """
+        import concurrent.futures
+
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(self.surface_extractor, grid_logits, **kwargs)
+        try:
+            while True:
+                try:
+                    return future.result(timeout=0.5)
+                except concurrent.futures.TimeoutError:
+                    check_cancel()  # raises if cancelled
+        finally:
+            # Don't wait for the thread — it's CPU-only and harmless.
+            pool.shutdown(wait=False)
 
     def enable_flashvdm_decoder(
         self,

@@ -323,7 +323,7 @@ def _process_image_to_glb(
         image=image,
         callback=_cancel_callback,
         callback_steps=1,
-        cancel_fn=_check,
+        check_cancel=_check,
     )[0]
     mesh.export(output_glb)
 

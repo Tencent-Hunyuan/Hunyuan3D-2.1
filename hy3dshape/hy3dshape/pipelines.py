@@ -665,7 +665,7 @@ class Hunyuan3DDiTPipeline:
         octree_resolution=256,
         mc_algo='mc',
         enable_pbar=True,
-        cancel_fn=None,
+        check_cancel=None,
     ):
         if not output_type == "latent":
             latents = 1. / self.vae.scale_factor * latents
@@ -678,7 +678,7 @@ class Hunyuan3DDiTPipeline:
                 octree_resolution=octree_resolution,
                 mc_algo=mc_algo,
                 enable_pbar=enable_pbar,
-                cancel_fn=cancel_fn,
+                check_cancel=check_cancel,
             )
         else:
             outputs = latents
@@ -713,7 +713,7 @@ class Hunyuan3DDiTFlowMatchingPipeline(Hunyuan3DDiTPipeline):
     ) -> List[List[trimesh.Trimesh]]:
         callback = kwargs.pop("callback", None)
         callback_steps = kwargs.pop("callback_steps", None)
-        cancel_fn = kwargs.pop("cancel_fn", None)
+        check_cancel = kwargs.pop("check_cancel", None)
 
         self.set_surface_extractor(mc_algo)
 
@@ -783,5 +783,5 @@ class Hunyuan3DDiTFlowMatchingPipeline(Hunyuan3DDiTPipeline):
             output_type,
             box_v, mc_level, num_chunks, octree_resolution, mc_algo,
             enable_pbar=enable_pbar,
-            cancel_fn=cancel_fn,
+            check_cancel=check_cancel,
         )
