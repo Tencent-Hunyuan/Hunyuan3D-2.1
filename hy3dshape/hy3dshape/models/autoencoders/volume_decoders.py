@@ -148,6 +148,7 @@ class VanillaVolumeDecoder:
         num_chunks: int = 10000,
         octree_resolution: int = None,
         enable_pbar: bool = True,
+        cancel_fn: Callable = None,
         **kwargs,
     ):
         device = latents.device
@@ -171,6 +172,8 @@ class VanillaVolumeDecoder:
         batch_logits = []
         for start in tqdm(range(0, xyz_samples.shape[0], num_chunks), desc=f"Volume Decoding",
                           disable=not enable_pbar):
+            if cancel_fn is not None:
+                cancel_fn()
             chunk_queries = xyz_samples[start: start + num_chunks, :]
             chunk_queries = repeat(chunk_queries, "p c -> b p c", b=batch_size)
             logits = geo_decoder(queries=chunk_queries, latents=latents)

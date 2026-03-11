@@ -294,6 +294,9 @@ def _process_image_to_glb(
         if cancel is not None and cancel.is_set():
             raise PreemptedError("Request preempted by a newer request")
 
+    def _cancel_callback(_step: int, _t: object, _outputs: object) -> None:
+        _check()
+
     # Generate timestamped output directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     input_name = os.path.splitext(os.path.basename(image_path))[0]
@@ -316,7 +319,12 @@ def _process_image_to_glb(
     _check()  # checkpoint: after rembg, before shape generation
 
     # Shape generation
-    mesh = shape_pipeline(image=image)[0]
+    mesh = shape_pipeline(
+        image=image,
+        callback=_cancel_callback,
+        callback_steps=1,
+        cancel_fn=_check,
+    )[0]
     mesh.export(output_glb)
 
     _check()  # checkpoint: after shape generation, before texture generation
