@@ -268,6 +268,85 @@ def _get_file_extension(filename: str) -> str:
     return os.path.splitext(filename)[1].lower().lstrip(".")
 
 
+def smooth_mesh_normals(glb_path: str) -> None:
+    """Add smooth vertex normals to a GLB file.
+
+    Computes area-weighted average normals across vertices sharing the same
+    position (including UV-seam splits) and writes them as an explicit NORMAL
+    attribute in the glTF primitive.  This turns flat/faceted shading into
+    smooth shading without changing geometry or texture coordinates.
+    """
+    import numpy as np
+    import pygltflib
+
+    glb = pygltflib.GLTF2().load(glb_path)
+    blob = glb._glb_data
+    prim = glb.meshes[0].primitives[0]
+
+    # Read vertex positions
+    pos_acc = glb.accessors[prim.attributes.POSITION]
+    pos_bv = glb.bufferViews[pos_acc.bufferView]
+    positions = np.frombuffer(
+        blob[pos_bv.byteOffset:pos_bv.byteOffset + pos_bv.byteLength],
+        dtype=np.float32,
+    ).reshape(-1, 3)
+
+    # Read face indices
+    idx_acc = glb.accessors[prim.indices]
+    idx_bv = glb.bufferViews[idx_acc.bufferView]
+    dtype = np.uint32 if idx_acc.componentType == pygltflib.UNSIGNED_INT else np.uint16
+    faces = np.frombuffer(
+        blob[idx_bv.byteOffset:idx_bv.byteOffset + idx_bv.byteLength],
+        dtype=dtype,
+    ).reshape(-1, 3)
+
+    # Group vertices by position (merging UV-seam splits for normal averaging)
+    _, inverse = np.unique(np.round(positions, decimals=6), axis=0, return_inverse=True)
+
+    # Face normals (area-weighted by cross product magnitude)
+    v0, v1, v2 = positions[faces[:, 0]], positions[faces[:, 1]], positions[faces[:, 2]]
+    fn = np.cross(v1 - v0, v2 - v0)
+    fn_len = np.linalg.norm(fn, axis=1, keepdims=True)
+    fn_len[fn_len == 0] = 1
+    fn /= fn_len
+
+    # Accumulate face normals per unique position
+    smooth = np.zeros((inverse.max() + 1, 3), dtype=np.float64)
+    np.add.at(smooth, inverse[faces[:, 0]], fn)
+    np.add.at(smooth, inverse[faces[:, 1]], fn)
+    np.add.at(smooth, inverse[faces[:, 2]], fn)
+    norms = np.linalg.norm(smooth, axis=1, keepdims=True)
+    norms[norms == 0] = 1
+    smooth /= norms
+
+    new_normals = smooth[inverse].astype(np.float32)
+
+    # Append normal data to binary buffer
+    normal_bytes = new_normals.tobytes()
+    normal_offset = len(blob)
+
+    glb.bufferViews.append(pygltflib.BufferView(
+        buffer=0,
+        byteOffset=normal_offset,
+        byteLength=len(normal_bytes),
+        target=pygltflib.ARRAY_BUFFER,
+    ))
+    glb.accessors.append(pygltflib.Accessor(
+        bufferView=len(glb.bufferViews) - 1,
+        byteOffset=0,
+        componentType=pygltflib.FLOAT,
+        count=len(new_normals),
+        type="VEC3",
+        max=new_normals.max(axis=0).tolist(),
+        min=new_normals.min(axis=0).tolist(),
+    ))
+    prim.attributes.NORMAL = len(glb.accessors) - 1
+
+    glb.buffers[0].byteLength = normal_offset + len(normal_bytes)
+    glb._glb_data = blob + normal_bytes
+    glb.save(glb_path)
+
+
 def _process_image_to_glb(
     image_path: str,
     shape_pipeline: ShapePipeline,
@@ -365,6 +444,7 @@ def _process_image_to_glb(
 def convert_image_to_3d(
     file: UploadFile = File(...),
     cancel_previous: bool = False,
+    smooth_normals: bool = False,
 ) -> FileResponse | JSONResponse:
     """Convert an uploaded image to a textured 3D GLB model.
 
@@ -413,6 +493,9 @@ def convert_image_to_3d(
         output_path = _process_image_to_glb(
             temp_path, shape_pipeline, texture_pipeline, rembg, cancel
         )
+        if smooth_normals:
+            logger.info("Applying smooth normals to %s", output_path)
+            smooth_mesh_normals(output_path)
         processing_time = time.time() - start_time
         logger.info(
             "Conversion completed for file: %s in %.2f seconds",
