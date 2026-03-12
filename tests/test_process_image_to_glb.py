@@ -96,6 +96,35 @@ class TestCancelAfterShapeBeforeTexture:
         mock_texture_pipeline.assert_not_called()
 
 
+class TestCancelDuringTexture:
+    """Verify check_cancel is forwarded to the texture pipeline."""
+
+    def test_raises_preempted_inside_texture(
+        self, tmp_path, monkeypatch, png_file,
+        mock_shape_pipeline, mock_rembg, mock_mesh,
+    ):
+        monkeypatch.chdir(tmp_path)
+        cancel = threading.Event()
+
+        def texture_fn(*args, **kwargs):
+            check_cancel = kwargs.get("check_cancel")
+            assert check_cancel is not None, "check_cancel not forwarded to texture pipeline"
+            # Simulate doing some work, then cancel arrives mid-texture
+            cancel.set()
+            check_cancel()  # should raise PreemptedError
+            # Should not reach here
+            out = kwargs.get("output_mesh_path", "output.obj")
+            return out
+
+        texture = MagicMock(side_effect=texture_fn)
+
+        with pytest.raises(PreemptedError):
+            _process_image_to_glb(
+                png_file, mock_shape_pipeline, texture,
+                mock_rembg, cancel,
+            )
+
+
 class TestCancelAfterTexture:
     def test_raises_at_checkpoint_after_texture(
         self, tmp_path, monkeypatch, png_file,

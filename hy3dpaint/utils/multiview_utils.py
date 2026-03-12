@@ -64,13 +64,15 @@ class multiviewDiffusionNet:
         os.environ["PL_GLOBAL_SEED"] = str(seed)
 
     @torch.no_grad()
-    def __call__(self, images, conditions, prompt=None, custom_view_size=None, resize_input=False):
+    def __call__(self, images, conditions, prompt=None, custom_view_size=None, resize_input=False, check_cancel=None):
         pils = self.forward_one(
-            images, conditions, prompt=prompt, custom_view_size=custom_view_size, resize_input=resize_input
+            images, conditions, prompt=prompt, custom_view_size=custom_view_size, resize_input=resize_input,
+            check_cancel=check_cancel,
         )
         return pils
 
-    def forward_one(self, input_images, control_images, prompt=None, custom_view_size=None, resize_input=False):
+    def forward_one(self, input_images, control_images, prompt=None, custom_view_size=None, resize_input=False,
+                     check_cancel=None):
         self.seed_everything(0)
         custom_view_size = custom_view_size if custom_view_size is not None else self.pipeline.view_size
         if not isinstance(input_images, List):
@@ -109,6 +111,12 @@ class multiviewDiffusionNet:
             "DDIMScheduler": 50,
             "ShiftSNRScheduler": 15,
         }
+
+        if check_cancel is not None:
+            def _step_end_cancel(pipe, step, timestep, callback_kwargs):
+                check_cancel()
+                return callback_kwargs
+            kwargs["callback_on_step_end"] = _step_end_cancel
 
         mvd_image = self.pipeline(
             input_images[0:1],

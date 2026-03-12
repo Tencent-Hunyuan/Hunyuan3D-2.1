@@ -414,6 +414,7 @@ def _process_image_to_glb(
         image_path=image,
         output_mesh_path=output_textured_obj,
         save_glb=False,
+        check_cancel=_check,
     )
 
     _check()  # checkpoint: after texture generation, before export

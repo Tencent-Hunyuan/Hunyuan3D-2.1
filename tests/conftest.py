@@ -118,6 +118,9 @@ def mock_shape_pipeline(mock_mesh):
 def mock_texture_pipeline():
     """Mock texture pipeline that writes a dummy OBJ and returns the path."""
     def texture_fn(*args, **kwargs):
+        check_cancel = kwargs.get("check_cancel")
+        if check_cancel is not None:
+            check_cancel()
         out = kwargs.get("output_mesh_path", "output.obj")
         os.makedirs(os.path.dirname(out), exist_ok=True)
         with open(out, "w") as f:

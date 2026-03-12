@@ -90,8 +90,13 @@ class Hunyuan3DPaintPipeline:
         print("Models Loaded.")
 
     @torch.no_grad()
-    def __call__(self, mesh_path=None, image_path=None, output_mesh_path=None, use_remesh=True, save_glb=True):
+    def __call__(self, mesh_path=None, image_path=None, output_mesh_path=None,
+                 use_remesh=True, save_glb=True, check_cancel=None):
         """Generate texture for 3D mesh using multiview diffusion"""
+        def _check():
+            if check_cancel is not None:
+                check_cancel()
+
         # Ensure image_prompt is a list
         if isinstance(image_path, str):
             image_prompt = Image.open(image_path)
@@ -110,6 +115,8 @@ class Hunyuan3DPaintPipeline:
         else:
             processed_mesh_path = mesh_path
 
+        _check()
+
         # Output path
         if output_mesh_path is None:
             output_mesh_path = os.path.join(path, f"textured_mesh.obj")
@@ -118,6 +125,8 @@ class Hunyuan3DPaintPipeline:
         mesh = trimesh.load(processed_mesh_path)
         mesh = mesh_uv_wrap(mesh)
         self.render.load_mesh(mesh=mesh)
+
+        _check()
 
         ########### View Selection #########
         selected_camera_elevs, selected_camera_azims, selected_view_weights = self.view_processor.bake_view_selection(
@@ -131,6 +140,8 @@ class Hunyuan3DPaintPipeline:
             selected_camera_elevs, selected_camera_azims, use_abs_coor=True
         )
         position_maps = self.view_processor.render_position_multiview(selected_camera_elevs, selected_camera_azims)
+
+        _check()
 
         ##########  Style  ###########
         image_caption = "high quality"
@@ -151,7 +162,11 @@ class Hunyuan3DPaintPipeline:
             prompt=image_caption,
             custom_view_size=self.config.resolution,
             resize_input=True,
+            check_cancel=check_cancel,
         )
+
+        _check()
+
         ###########  Enhance  ##########
         enhance_images = {}
         enhance_images["albedo"] = copy.deepcopy(multiviews_pbr["albedo"])
@@ -159,7 +174,9 @@ class Hunyuan3DPaintPipeline:
 
         for i in range(len(enhance_images["albedo"])):
             enhance_images["albedo"][i] = self.models["super_model"](enhance_images["albedo"][i])
+            _check()
             enhance_images["mr"][i] = self.models["super_model"](enhance_images["mr"][i])
+            _check()
 
         ###########  Bake  ##########
         for i in range(len(enhance_images)):
@@ -171,10 +188,15 @@ class Hunyuan3DPaintPipeline:
             enhance_images["albedo"], selected_camera_elevs, selected_camera_azims, selected_view_weights
         )
         mask_np = (mask.squeeze(-1).cpu().numpy() * 255).astype(np.uint8)
+
+        _check()
+
         texture_mr, mask_mr = self.view_processor.bake_from_multiview(
             enhance_images["mr"], selected_camera_elevs, selected_camera_azims, selected_view_weights
         )
         mask_mr_np = (mask_mr.squeeze(-1).cpu().numpy() * 255).astype(np.uint8)
+
+        _check()
 
         ##########  inpaint  ###########
         texture = self.view_processor.texture_inpaint(texture, mask_np)
@@ -182,6 +204,8 @@ class Hunyuan3DPaintPipeline:
         if "mr" in enhance_images:
             texture_mr = self.view_processor.texture_inpaint(texture_mr, mask_mr_np)
             self.render.set_texture_mr(texture_mr)
+
+        _check()
 
         self.render.save_mesh(output_mesh_path, downsample=True)
 
