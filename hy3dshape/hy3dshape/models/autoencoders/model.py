@@ -209,7 +209,7 @@ class VectsetVAE(nn.Module):
         self.surface_extractor = surface_extractor
 
     def latents2mesh(self, latents: torch.FloatTensor, **kwargs):
-        check_cancel = kwargs.get('check_cancel')
+        check_cancel = kwargs.pop('check_cancel', None)
         with synchronize_timer('Volume decoding'):
             grid_logits = self.volume_decoder(latents, self.geo_decoder, **kwargs)
         if check_cancel is not None:
