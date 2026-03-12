@@ -2,105 +2,17 @@
 
 These tests verify that check_cancel is properly forwarded through the pipeline
 and that cancellation is detected promptly. No GPU or ML models required.
-
-The hy3dshape package has heavy transitive dependencies (diffusers, torchvision
-CUDA builds, etc.) that may not be available in a test environment.  We bypass
-the top-level ``__init__.py`` by wiring the package hierarchy ourselves so that
-only the modules under test are actually loaded.
 """
 
-import importlib
-import importlib.util
-import os
-import sys
 import threading
 import time
-import types
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 import torch
 
 from api import PreemptedError
-
-# ---------------------------------------------------------------------------
-# Bootstrap: load only the hy3dshape modules we need, without triggering the
-# heavy __init__.py that pulls in diffusers/torchvision/etc.
-# ---------------------------------------------------------------------------
-
-_HY3D_ROOT = str(Path(__file__).resolve().parent.parent / "hy3dshape" / "hy3dshape")
-_AE_ROOT = os.path.join(_HY3D_ROOT, "models", "autoencoders")
-
-
-def _ensure_package(name: str, path: str) -> types.ModuleType:
-    """Register a bare package in sys.modules (no __init__.py executed)."""
-    if name in sys.modules:
-        return sys.modules[name]
-    mod = types.ModuleType(name)
-    mod.__path__ = [path]
-    mod.__package__ = name
-    sys.modules[name] = mod
-    return mod
-
-
-def _load_module(fqn: str, filepath: str) -> types.ModuleType:
-    """Load a single .py file as *fqn* without running parent __init__ files."""
-    if fqn in sys.modules:
-        return sys.modules[fqn]
-    spec = importlib.util.spec_from_file_location(fqn, filepath)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[fqn] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def _bootstrap():
-    """Wire the minimal package tree and load the modules under test."""
-    # 1. bare packages (no code executed)
-    _ensure_package("hy3dshape", _HY3D_ROOT)
-    _ensure_package("hy3dshape.utils", os.path.join(_HY3D_ROOT, "utils"))
-    _ensure_package("hy3dshape.models", os.path.join(_HY3D_ROOT, "models"))
-    _ensure_package("hy3dshape.models.autoencoders", _AE_ROOT)
-
-    # 2. utils – only load utils.py (logger, synchronize_timer); skip misc.py (needs omegaconf)
-    utils_mod = _load_module(
-        "hy3dshape.utils.utils",
-        os.path.join(_HY3D_ROOT, "utils", "utils.py"),
-    )
-    # Re-export into the utils package so `from ...utils import logger` works
-    utils_pkg = sys.modules["hy3dshape.utils"]
-    for attr in ("logger", "synchronize_timer", "smart_load_model", "get_logger"):
-        if hasattr(utils_mod, attr):
-            setattr(utils_pkg, attr, getattr(utils_mod, attr))
-
-    # 3. Stub heavy sibling modules that volume_decoders.py / model.py import
-    #    but we never exercise in these tests.
-    for stub_name in (
-        "hy3dshape.models.autoencoders.attention_blocks",
-        "hy3dshape.models.autoencoders.attention_processors",
-    ):
-        sys.modules.setdefault(stub_name, MagicMock())
-
-    # 4. Load the modules we actually test
-    _load_module(
-        "hy3dshape.models.autoencoders.surface_extractors",
-        os.path.join(_AE_ROOT, "surface_extractors.py"),
-    )
-    _load_module(
-        "hy3dshape.models.autoencoders.volume_decoders",
-        os.path.join(_AE_ROOT, "volume_decoders.py"),
-    )
-    _load_module(
-        "hy3dshape.models.autoencoders.model",
-        os.path.join(_AE_ROOT, "model.py"),
-    )
-
-
-_bootstrap()
-
-from hy3dshape.models.autoencoders.volume_decoders import VanillaVolumeDecoder  # noqa: E402
-from hy3dshape.models.autoencoders.model import VectsetVAE  # noqa: E402
+from tests.hy3dshape_bootstrap import VectsetVAE, VanillaVolumeDecoder
 
 
 # ---------------------------------------------------------------------------
