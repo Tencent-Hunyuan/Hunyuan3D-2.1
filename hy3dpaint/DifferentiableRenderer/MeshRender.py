@@ -622,13 +622,14 @@ class MeshRender:
         if texture_data is not None:
             self.set_texture(texture_data)
 
-    def save_mesh(self, mesh_path, downsample=False):
+    def save_mesh(self, mesh_path, downsample=False, check_cancel=None):
         """
         Save current mesh with textures to file.
-        
+
         Args:
             mesh_path: Output file path
             downsample: Whether to downsample textures by half
+            check_cancel: Optional callable that raises on cancellation
         """
 
         vtx_pos, pos_idx, vtx_uv, uv_idx = self.get_mesh(normalize=False)
@@ -649,6 +650,9 @@ class MeshRender:
                 texture_normal = cv2.resize(
                     texture_normal, (texture_normal.shape[1] // 2, texture_normal.shape[0] // 2)
                 )
+
+        if check_cancel is not None:
+            check_cancel()
 
         save_mesh(
             mesh_path,

@@ -207,7 +207,7 @@ class Hunyuan3DPaintPipeline:
 
         _check()
 
-        self.render.save_mesh(output_mesh_path, downsample=True)
+        self.render.save_mesh(output_mesh_path, downsample=True, check_cancel=_check)
 
         if save_glb:
             convert_obj_to_glb(output_mesh_path, output_mesh_path.replace(".obj", ".glb"))
