@@ -37,25 +37,6 @@ from .volume_decoders import VanillaVolumeDecoder, FlashVDMVolumeDecoding, Hiera
 from ...utils import logger, synchronize_timer, smart_load_model
 
 
-def _surface_extract_worker(extractor, grid_logits_cpu, kwargs, conn):
-    """Run surface extraction and send the result through *conn*.
-
-    Used as the target for a subprocess so that the main process can
-    poll for cancellation independently of the GIL.
-    """
-    try:
-        outputs = extractor(grid_logits_cpu, **kwargs)
-        conn.send(outputs)
-    except BaseException as exc:
-        try:
-            conn.send(exc)
-        except Exception:
-            # The original exception may not be picklable.
-            conn.send(RuntimeError(str(exc)))
-    finally:
-        conn.close()
-
-
 class DiagonalGaussianDistribution(object):
     def __init__(self, parameters: Union[torch.Tensor, List[torch.Tensor]], deterministic=False, feat_dim=1):
         """
@@ -234,67 +215,8 @@ class VectsetVAE(nn.Module):
         if check_cancel is not None:
             check_cancel()
         with synchronize_timer('Surface extraction'):
-            if check_cancel is not None:
-                logger.info("Using cancellable surface extraction (subprocess)")
-                outputs = self._cancellable_surface_extract(
-                    grid_logits, check_cancel, **kwargs
-                )
-            else:
-                logger.info("Using standard surface extraction (no check_cancel)")
-                outputs = self.surface_extractor(grid_logits, **kwargs)
+            outputs = self.surface_extractor(grid_logits, **kwargs)
         return outputs
-
-    def _cancellable_surface_extract(self, grid_logits, check_cancel, **kwargs):
-        """Run surface extraction in a subprocess, polling for cancellation.
-
-        ``measure.marching_cubes`` is a blocking C call that holds the Python
-        GIL for its entire duration, preventing a threaded approach from ever
-        executing ``check_cancel`` until marching cubes finishes.  A subprocess
-        has its own GIL, so the main process can poll freely.
-
-        Uses ``fork`` so the child inherits the surface extractor and grid
-        data without serialisation overhead.  The child is CPU-only and is
-        terminated on cancellation.
-        """
-        import multiprocessing as mp
-
-        grid_logits_cpu = grid_logits.detach().cpu()
-        check_cancel()
-
-        ctx = mp.get_context('fork')
-        parent_conn, child_conn = ctx.Pipe(duplex=False)
-
-        proc = ctx.Process(
-            target=_surface_extract_worker,
-            args=(self.surface_extractor, grid_logits_cpu, kwargs, child_conn),
-        )
-        proc.start()
-        logger.info("Surface extraction subprocess started (pid=%d)", proc.pid)
-        child_conn.close()  # only the child writes
-
-        try:
-            while True:
-                if parent_conn.poll(timeout=0.5):
-                    try:
-                        result = parent_conn.recv()
-                    except EOFError:
-                        proc.join(timeout=5)
-                        raise RuntimeError(
-                            f"Surface extraction process exited with code {proc.exitcode}"
-                        )
-                    if isinstance(result, BaseException):
-                        proc.join(timeout=5)
-                        raise result
-                    logger.info("Surface extraction subprocess completed successfully")
-                    proc.join(timeout=5)
-                    return result
-                check_cancel()  # raises PreemptedError if cancelled
-        finally:
-            parent_conn.close()
-            if proc.is_alive():
-                logger.info("Terminating surface extraction subprocess (pid=%d)", proc.pid)
-                proc.terminate()
-                proc.join(timeout=2)
 
     def enable_flashvdm_decoder(
         self,

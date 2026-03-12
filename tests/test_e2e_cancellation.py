@@ -50,7 +50,7 @@ def _make_vae(volume_decoder_fn, surface_extractor_fn):
 
 
 def _dummy_surface_extractor(grid_logits, **kwargs):
-    """Return a single-triangle mesh.  Picklable (runs in a subprocess)."""
+    """Return a single-triangle mesh."""
     return [Latent2MeshOutput(
         mesh_v=np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32),
         mesh_f=np.array([[0, 1, 2]]),
@@ -227,11 +227,11 @@ class TestE2ECancelDuringVolumeDecoding:
             )
 
 
-class TestE2ECancelDuringSurfaceExtraction:
-    """POST /cancel while latents2mesh is inside surface extraction → 409."""
+class TestE2ECancelDuringTextureGeneration:
+    """POST /cancel while texture pipeline is running → 409."""
 
-    def test_cancel_during_surface_extraction(
-        self, tmp_path, monkeypatch, mock_mesh, mock_texture_pipeline,
+    def test_cancel_during_texture(
+        self, tmp_path, monkeypatch, mock_mesh,
         mock_rembg, mock_trimesh_load,
     ):
         monkeypatch.chdir(tmp_path)
@@ -240,35 +240,29 @@ class TestE2ECancelDuringSurfaceExtraction:
         isolated_pm = PreemptionManager()
         monkeypatch.setattr(api_module, "preemption", isolated_pm)
 
-        entered_extraction = threading.Event()
+        entered_texture = threading.Event()
 
-        def slow_surface_extractor(grid_logits, **kwargs):
-            """Block for 10 s (runs in a subprocess via fork)."""
-            # Signal the parent process that extraction has started.
-            # We can't use threading.Event across processes, so we use
-            # a file as a cross-process flag.
-            flag_path = os.path.join(
-                os.environ.get("TEST_TMP", "/tmp"),
-                "_extraction_started",
-            )
-            with open(flag_path, "w") as f:
-                f.write("1")
-            time.sleep(10)
-            return [Latent2MeshOutput(
-                mesh_v=np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]],
-                                dtype=np.float32),
-                mesh_f=np.array([[0, 1, 2]]),
-            )]
+        def blocking_texture_pipeline(*args, **kwargs):
+            """Simulate a long texture generation that respects check_cancel."""
+            check_cancel = kwargs.get("check_cancel")
+            out = kwargs.get("output_mesh_path", "output.obj")
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            entered_texture.set()  # signal: we're inside texture generation
+            # Simulate long work with periodic cancellation checks
+            for _ in range(20):
+                time.sleep(0.5)
+                if check_cancel is not None:
+                    check_cancel()
+            with open(out, "w") as f:
+                f.write("# fake OBJ\n")
+            return out
 
-        vae = _make_vae(_fast_volume_decoder, slow_surface_extractor)
+        vae = _make_vae(_fast_volume_decoder, _dummy_surface_extractor)
         shape = _make_shape_pipeline(vae, mock_mesh)
-
-        flag = os.path.join(str(tmp_path), "_extraction_started")
-        monkeypatch.setenv("TEST_TMP", str(tmp_path))
 
         with patch.object(
             pipeline_manager, "get_pipelines",
-            return_value=(shape, mock_texture_pipeline, mock_rembg),
+            return_value=(shape, blocking_texture_pipeline, mock_rembg),
         ), patch("api.trimesh.load", mock_trimesh_load):
             from starlette.testclient import TestClient
             client = TestClient(app)
@@ -281,12 +275,8 @@ class TestE2ECancelDuringSurfaceExtraction:
             t = threading.Thread(target=do_convert)
             t.start()
 
-            # Wait for the surface-extraction subprocess to start
-            for _ in range(100):
-                if os.path.exists(flag):
-                    break
-                time.sleep(0.05)
-            assert os.path.exists(flag), "Surface extraction subprocess never started"
+            # Wait until we're inside texture generation
+            entered_texture.wait(timeout=5)
 
             # Cancel via HTTP
             cancel_time = time.monotonic()
@@ -298,9 +288,9 @@ class TestE2ECancelDuringSurfaceExtraction:
 
             assert result[0] is not None
             assert result[0].status_code == 409
-            # The surface extractor sleeps 10s; cancellation via subprocess
-            # termination should respond well under that.
+            # Texture pipeline checks cancel every 0.5s; should respond
+            # well under the 10s total duration.
             assert elapsed < 3.0, (
                 f"409 should arrive within ~1s of cancel, took {elapsed:.2f}s "
-                f"(would be ~10s if subprocess termination is broken)"
+                f"(would be ~10s if check_cancel not forwarded to texture pipeline)"
             )
