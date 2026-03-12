@@ -211,7 +211,7 @@ class VectsetVAE(nn.Module):
     def latents2mesh(self, latents: torch.FloatTensor, **kwargs):
         check_cancel = kwargs.pop('check_cancel', None)
         with synchronize_timer('Volume decoding'):
-            grid_logits = self.volume_decoder(latents, self.geo_decoder, **kwargs)
+            grid_logits = self.volume_decoder(latents, self.geo_decoder, check_cancel=check_cancel, **kwargs)
         if check_cancel is not None:
             check_cancel()
         with synchronize_timer('Surface extraction'):
@@ -234,8 +234,15 @@ class VectsetVAE(nn.Module):
         """
         import concurrent.futures
 
+        # Move grid to CPU in the main thread so the worker thread only does
+        # GIL-free CPU work (numpy view + marching cubes C code).  Without
+        # this, the GPU→CPU sync inside the worker holds the GIL and blocks
+        # the cancellation poll loop.
+        grid_logits_cpu = grid_logits.detach().cpu()
+        check_cancel()
+
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = pool.submit(self.surface_extractor, grid_logits, **kwargs)
+        future = pool.submit(self.surface_extractor, grid_logits_cpu, **kwargs)
         try:
             while True:
                 try:
