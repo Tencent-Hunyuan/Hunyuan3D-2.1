@@ -37,6 +37,25 @@ from .volume_decoders import VanillaVolumeDecoder, FlashVDMVolumeDecoding, Hiera
 from ...utils import logger, synchronize_timer, smart_load_model
 
 
+def _surface_extract_worker(extractor, grid_logits_cpu, kwargs, conn):
+    """Run surface extraction and send the result through *conn*.
+
+    Used as the target for a subprocess so that the main process can
+    poll for cancellation independently of the GIL.
+    """
+    try:
+        outputs = extractor(grid_logits_cpu, **kwargs)
+        conn.send(outputs)
+    except BaseException as exc:
+        try:
+            conn.send(exc)
+        except Exception:
+            # The original exception may not be picklable.
+            conn.send(RuntimeError(str(exc)))
+    finally:
+        conn.close()
+
+
 class DiagonalGaussianDistribution(object):
     def __init__(self, parameters: Union[torch.Tensor, List[torch.Tensor]], deterministic=False, feat_dim=1):
         """
@@ -224,34 +243,53 @@ class VectsetVAE(nn.Module):
         return outputs
 
     def _cancellable_surface_extract(self, grid_logits, check_cancel, **kwargs):
-        """Run surface extraction in a thread, polling for cancellation.
+        """Run surface extraction in a subprocess, polling for cancellation.
 
-        ``measure.marching_cubes`` is a single blocking C call that can take
-        tens of seconds.  By running it in a thread we can poll ``check_cancel``
-        every 0.5 s and raise early.  The orphaned thread is CPU-only (the
-        grid has already been copied to host memory) so it is safe to let it
-        finish in the background without GPU contention.
+        ``measure.marching_cubes`` is a blocking C call that holds the Python
+        GIL for its entire duration, preventing a threaded approach from ever
+        executing ``check_cancel`` until marching cubes finishes.  A subprocess
+        has its own GIL, so the main process can poll freely.
+
+        Uses ``fork`` so the child inherits the surface extractor and grid
+        data without serialisation overhead.  The child is CPU-only and is
+        terminated on cancellation.
         """
-        import concurrent.futures
+        import multiprocessing as mp
 
-        # Move grid to CPU in the main thread so the worker thread only does
-        # GIL-free CPU work (numpy view + marching cubes C code).  Without
-        # this, the GPU→CPU sync inside the worker holds the GIL and blocks
-        # the cancellation poll loop.
         grid_logits_cpu = grid_logits.detach().cpu()
         check_cancel()
 
-        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = pool.submit(self.surface_extractor, grid_logits_cpu, **kwargs)
+        ctx = mp.get_context('fork')
+        parent_conn, child_conn = ctx.Pipe(duplex=False)
+
+        proc = ctx.Process(
+            target=_surface_extract_worker,
+            args=(self.surface_extractor, grid_logits_cpu, kwargs, child_conn),
+        )
+        proc.start()
+        child_conn.close()  # only the child writes
+
         try:
             while True:
-                try:
-                    return future.result(timeout=0.5)
-                except concurrent.futures.TimeoutError:
-                    check_cancel()  # raises if cancelled
+                if parent_conn.poll(timeout=0.5):
+                    try:
+                        result = parent_conn.recv()
+                    except EOFError:
+                        proc.join(timeout=5)
+                        raise RuntimeError(
+                            f"Surface extraction process exited with code {proc.exitcode}"
+                        )
+                    if isinstance(result, BaseException):
+                        proc.join(timeout=5)
+                        raise result
+                    proc.join(timeout=5)
+                    return result
+                check_cancel()  # raises PreemptedError if cancelled
         finally:
-            # Don't wait for the thread — it's CPU-only and harmless.
-            pool.shutdown(wait=False)
+            parent_conn.close()
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=2)
 
     def enable_flashvdm_decoder(
         self,
