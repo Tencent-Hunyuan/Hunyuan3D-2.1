@@ -98,7 +98,7 @@ pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https
 pip install -r requirements.txt
 
 cd hy3dpaint/custom_rasterizer
-pip install -e .
+pip install --no-build-isolation -e .
 cd ../..
 cd hy3dpaint/DifferentiableRenderer
 bash compile_mesh_painter.sh
