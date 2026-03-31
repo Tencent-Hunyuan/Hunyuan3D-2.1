@@ -25,8 +25,9 @@ from diffusers import EulerAncestralDiscreteScheduler, DDIMScheduler, UniPCMulti
 
 
 class multiviewDiffusionNet:
-    def __init__(self, config) -> None:
+    def __init__(self, config, num_inference_steps=None) -> None:
         self.device = config.device
+        self.num_inference_steps = num_inference_steps
 
         cfg_path = config.multiview_cfg_path
         custom_pipeline = os.path.join(os.path.dirname(__file__),"..","hunyuanpaintpbr")
@@ -118,9 +119,10 @@ class multiviewDiffusionNet:
                 return callback_kwargs
             kwargs["callback_on_step_end"] = _step_end_cancel
 
+        steps = self.num_inference_steps or infer_steps_dict[self.pipeline.scheduler.__class__.__name__]
         mvd_image = self.pipeline(
             input_images[0:1],
-            num_inference_steps=infer_steps_dict[self.pipeline.scheduler.__class__.__name__],
+            num_inference_steps=steps,
             prompt=prompt,
             sync_condition=sync_condition,
             guidance_scale=3.0,

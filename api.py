@@ -146,7 +146,7 @@ class PipelineManager:
         logger.info("Loading texture generation pipeline...")
         max_num_view = 4
         resolution = 512
-        conf = Hunyuan3DPaintConfig(max_num_view, resolution)
+        conf = Hunyuan3DPaintConfig(max_num_view, resolution, texture_steps=8)
         conf.realesrgan_ckpt_path = "hy3dpaint/ckpt/RealESRGAN_x4plus.pth"
         conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
         conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
@@ -469,6 +469,8 @@ def convert_image_to_3d(
     cancel_previous: bool = False,
     smooth_normals: bool = False,
     steps: int = 25,
+    texture_steps: int = 8,
+    texture_views: int = 4,
 ) -> FileResponse | JSONResponse:
     """Convert an uploaded image to a textured 3D GLB model.
 
@@ -514,6 +516,12 @@ def convert_image_to_3d(
 
         # Get pipelines and process
         shape_pipeline, texture_pipeline, rembg = pipeline_manager.get_pipelines()
+        # Apply per-request texture config overrides
+        texture_pipeline.config.texture_steps = texture_steps
+        texture_pipeline.config.max_selected_view_num = texture_views
+        if hasattr(texture_pipeline.models.get("multiview_model", None) or object(), "num_inference_steps"):
+            texture_pipeline.models["multiview_model"].num_inference_steps = texture_steps
+
         output_path = _process_image_to_glb(
             temp_path, shape_pipeline, texture_pipeline, rembg, cancel,
             num_inference_steps=steps,

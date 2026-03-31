@@ -13,12 +13,16 @@
 # by Tencent in accordance with TENCENT HUNYUAN COMMUNITY LICENSE AGREEMENT.
 
 import os
+import time
+import logging
 import torch
 import copy
 import trimesh
 import numpy as np
 from PIL import Image
 from typing import List
+
+logger = logging.getLogger("hunyuan3d-api")
 from DifferentiableRenderer.MeshRender import MeshRender
 from utils.simplify_mesh_utils import remesh_mesh
 from utils.multiview_utils import multiviewDiffusionNet
@@ -35,7 +39,7 @@ diffusers_logging.set_verbosity(50)
 
 
 class Hunyuan3DPaintConfig:
-    def __init__(self, max_num_view, resolution):
+    def __init__(self, max_num_view, resolution, skip_esrgan=False, texture_steps=None):
         self.device = "cuda"
 
         self.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
@@ -52,6 +56,8 @@ class Hunyuan3DPaintConfig:
         self.resolution = resolution
         self.bake_exp = 4
         self.merge_method = "fast"
+        self.skip_esrgan = skip_esrgan
+        self.texture_steps = texture_steps
 
         # view selection
         self.candidate_camera_azims = [0, 90, 180, 270, 0, 180]
@@ -85,8 +91,11 @@ class Hunyuan3DPaintPipeline:
 
     def load_models(self):
         torch.cuda.empty_cache()
-        self.models["super_model"] = imageSuperNet(self.config)
-        self.models["multiview_model"] = multiviewDiffusionNet(self.config)
+        if not self.config.skip_esrgan:
+            self.models["super_model"] = imageSuperNet(self.config)
+        self.models["multiview_model"] = multiviewDiffusionNet(
+            self.config, num_inference_steps=self.config.texture_steps
+        )
         print("Models Loaded.")
 
     @torch.no_grad()
@@ -108,13 +117,13 @@ class Hunyuan3DPaintPipeline:
             image_prompt = image_path
 
         # Process mesh
+        t = time.time()
         path = os.path.dirname(mesh_path)
         if use_remesh:
             processed_mesh_path = os.path.join(path, "white_mesh_remesh.obj")
             remesh_mesh(mesh_path, processed_mesh_path)
         else:
             processed_mesh_path = mesh_path
-
         _check()
 
         # Output path
@@ -125,10 +134,12 @@ class Hunyuan3DPaintPipeline:
         mesh = trimesh.load(processed_mesh_path)
         mesh = mesh_uv_wrap(mesh)
         self.render.load_mesh(mesh=mesh)
+        logger.info("  Remesh + UV wrap: %.2fs", time.time() - t)
 
         _check()
 
         ########### View Selection #########
+        t = time.time()
         selected_camera_elevs, selected_camera_azims, selected_view_weights = self.view_processor.bake_view_selection(
             self.config.candidate_camera_elevs,
             self.config.candidate_camera_azims,
@@ -140,6 +151,7 @@ class Hunyuan3DPaintPipeline:
             selected_camera_elevs, selected_camera_azims, use_abs_coor=True
         )
         position_maps = self.view_processor.render_position_multiview(selected_camera_elevs, selected_camera_azims)
+        logger.info("  View selection + rendering (%d views): %.2fs", len(selected_camera_elevs), time.time() - t)
 
         _check()
 
@@ -156,6 +168,7 @@ class Hunyuan3DPaintPipeline:
         image_style = [image.convert("RGB") for image in image_style]
 
         ###########  Multiview  ##########
+        t = time.time()
         multiviews_pbr = self.models["multiview_model"](
             image_style,
             normal_maps + position_maps,
@@ -164,22 +177,34 @@ class Hunyuan3DPaintPipeline:
             resize_input=True,
             check_cancel=check_cancel,
         )
+        logger.info("  Multiview diffusion: %.2fs", time.time() - t)
 
         _check()
 
         ###########  Enhance  ##########
+        t = time.time()
         enhance_images = {}
         enhance_images["albedo"] = copy.deepcopy(multiviews_pbr["albedo"])
         enhance_images["mr"] = copy.deepcopy(multiviews_pbr["mr"])
 
-        for i in range(len(enhance_images["albedo"])):
-            enhance_images["albedo"][i] = self.models["super_model"](enhance_images["albedo"][i])
-            _check()
-            enhance_images["mr"][i] = self.models["super_model"](enhance_images["mr"][i])
-            _check()
+        if not self.config.skip_esrgan:
+            for i in range(len(enhance_images["albedo"])):
+                enhance_images["albedo"][i] = self.models["super_model"](enhance_images["albedo"][i])
+                _check()
+                enhance_images["mr"][i] = self.models["super_model"](enhance_images["mr"][i])
+                _check()
+            logger.info("  ESRGAN super-resolution (%d images): %.2fs",
+                        len(enhance_images["albedo"]) * 2, time.time() - t)
+        else:
+            target_size = (self.config.render_size, self.config.render_size)
+            for i in range(len(enhance_images["albedo"])):
+                enhance_images["albedo"][i] = enhance_images["albedo"][i].resize(target_size, Image.LANCZOS)
+                enhance_images["mr"][i] = enhance_images["mr"][i].resize(target_size, Image.LANCZOS)
+            logger.info("  Bicubic resize (ESRGAN skipped): %.2fs", time.time() - t)
 
         ###########  Bake  ##########
-        for i in range(len(enhance_images)):
+        t = time.time()
+        for i in range(len(enhance_images["albedo"])):
             enhance_images["albedo"][i] = enhance_images["albedo"][i].resize(
                 (self.config.render_size, self.config.render_size)
             )
@@ -195,10 +220,12 @@ class Hunyuan3DPaintPipeline:
             enhance_images["mr"], selected_camera_elevs, selected_camera_azims, selected_view_weights
         )
         mask_mr_np = (mask_mr.squeeze(-1).cpu().numpy() * 255).astype(np.uint8)
+        logger.info("  Texture baking: %.2fs", time.time() - t)
 
         _check()
 
         ##########  inpaint  ###########
+        t = time.time()
         texture = self.view_processor.texture_inpaint(texture, mask_np)
         self.render.set_texture(texture, force_set=True)
         if "mr" in enhance_images:
@@ -208,6 +235,7 @@ class Hunyuan3DPaintPipeline:
         _check()
 
         self.render.save_mesh(output_mesh_path, downsample=True, check_cancel=_check)
+        logger.info("  Inpaint + save: %.2fs", time.time() - t)
 
         if save_glb:
             convert_obj_to_glb(output_mesh_path, output_mesh_path.replace(".obj", ".glb"))

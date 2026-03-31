@@ -68,7 +68,7 @@ class ViewProcessor:
         total_viewed_tri_idxs = set()
         total_viewed_area = 0.0
 
-        for idx in range(6):
+        for idx in range(min(6, max_selected_view_num)):
             selected_camera_elevs.append(candidate_camera_elevs[idx])
             selected_camera_azims.append(candidate_camera_azims[idx])
             selected_view_weights.append(candidate_view_weights[idx])
