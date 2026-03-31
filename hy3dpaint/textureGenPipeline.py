@@ -58,6 +58,7 @@ class Hunyuan3DPaintConfig:
         self.merge_method = "fast"
         self.skip_esrgan = skip_esrgan
         self.texture_steps = texture_steps
+        self.fast_remesh = False
 
         # view selection
         self.candidate_camera_azims = [0, 90, 180, 270, 0, 180]
@@ -121,20 +122,25 @@ class Hunyuan3DPaintPipeline:
         path = os.path.dirname(mesh_path)
         if use_remesh:
             processed_mesh_path = os.path.join(path, "white_mesh_remesh.obj")
-            remesh_mesh(mesh_path, processed_mesh_path)
+            remesh_mesh(mesh_path, processed_mesh_path, fast=self.config.fast_remesh)
         else:
             processed_mesh_path = mesh_path
         _check()
+        logger.info("    Remesh: %.2fs", time.time() - t)
 
         # Output path
         if output_mesh_path is None:
             output_mesh_path = os.path.join(path, f"textured_mesh.obj")
 
         # Load mesh
+        t2 = time.time()
         mesh = trimesh.load(processed_mesh_path)
         mesh = mesh_uv_wrap(mesh)
+        logger.info("    UV wrap: %.2fs", time.time() - t2)
+        t2 = time.time()
         self.render.load_mesh(mesh=mesh)
-        logger.info("  Remesh + UV wrap: %.2fs", time.time() - t)
+        logger.info("    Load mesh into renderer: %.2fs", time.time() - t2)
+        logger.info("  Remesh + UV wrap total: %.2fs", time.time() - t)
 
         _check()
 
@@ -231,11 +237,13 @@ class Hunyuan3DPaintPipeline:
         if "mr" in enhance_images:
             texture_mr = self.view_processor.texture_inpaint(texture_mr, mask_mr_np)
             self.render.set_texture_mr(texture_mr)
+        logger.info("    Inpaint: %.2fs", time.time() - t)
 
         _check()
 
+        t = time.time()
         self.render.save_mesh(output_mesh_path, downsample=True, check_cancel=_check)
-        logger.info("  Inpaint + save: %.2fs", time.time() - t)
+        logger.info("    Save mesh: %.2fs", time.time() - t)
 
         if save_glb:
             convert_obj_to_glb(output_mesh_path, output_mesh_path.replace(".obj", ".glb"))

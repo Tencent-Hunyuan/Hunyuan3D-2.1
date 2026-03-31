@@ -469,8 +469,9 @@ def convert_image_to_3d(
     cancel_previous: bool = False,
     smooth_normals: bool = False,
     steps: int = 25,
-    texture_steps: int = 8,
-    texture_views: int = 4,
+    texture_steps: int = 8,  # Hunyuan3D v2.1 default is 15 steps for texture generation, default to 8 for faster results
+    texture_views: int = 4,  # Hunyuan3D v2.1 default is 6 views for texture generation, default to 4 for faster results
+    fast_remesh: bool = False,
 ) -> FileResponse | JSONResponse:
     """Convert an uploaded image to a textured 3D GLB model.
 
@@ -519,6 +520,7 @@ def convert_image_to_3d(
         # Apply per-request texture config overrides
         texture_pipeline.config.texture_steps = texture_steps
         texture_pipeline.config.max_selected_view_num = texture_views
+        texture_pipeline.config.fast_remesh = fast_remesh
         if hasattr(texture_pipeline.models.get("multiview_model", None) or object(), "num_inference_steps"):
             texture_pipeline.models["multiview_model"].num_inference_steps = texture_steps
 
