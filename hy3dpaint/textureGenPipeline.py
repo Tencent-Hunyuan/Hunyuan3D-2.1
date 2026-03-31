@@ -39,7 +39,7 @@ diffusers_logging.set_verbosity(50)
 
 
 class Hunyuan3DPaintConfig:
-    def __init__(self, max_num_view, resolution, skip_esrgan=False, texture_steps=None):
+    def __init__(self, max_num_view, resolution, texture_steps=None):
         self.device = "cuda"
 
         self.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
@@ -56,7 +56,6 @@ class Hunyuan3DPaintConfig:
         self.resolution = resolution
         self.bake_exp = 4
         self.merge_method = "fast"
-        self.skip_esrgan = skip_esrgan
         self.texture_steps = texture_steps
         self.fast_remesh = False
 
@@ -92,8 +91,7 @@ class Hunyuan3DPaintPipeline:
 
     def load_models(self):
         torch.cuda.empty_cache()
-        if not self.config.skip_esrgan:
-            self.models["super_model"] = imageSuperNet(self.config)
+        self.models["super_model"] = imageSuperNet(self.config)
         self.models["multiview_model"] = multiviewDiffusionNet(
             self.config, num_inference_steps=self.config.texture_steps
         )
@@ -193,20 +191,13 @@ class Hunyuan3DPaintPipeline:
         enhance_images["albedo"] = copy.deepcopy(multiviews_pbr["albedo"])
         enhance_images["mr"] = copy.deepcopy(multiviews_pbr["mr"])
 
-        if not self.config.skip_esrgan:
-            for i in range(len(enhance_images["albedo"])):
-                enhance_images["albedo"][i] = self.models["super_model"](enhance_images["albedo"][i])
-                _check()
-                enhance_images["mr"][i] = self.models["super_model"](enhance_images["mr"][i])
-                _check()
-            logger.info("  ESRGAN super-resolution (%d images): %.2fs",
-                        len(enhance_images["albedo"]) * 2, time.time() - t)
-        else:
-            target_size = (self.config.render_size, self.config.render_size)
-            for i in range(len(enhance_images["albedo"])):
-                enhance_images["albedo"][i] = enhance_images["albedo"][i].resize(target_size, Image.LANCZOS)
-                enhance_images["mr"][i] = enhance_images["mr"][i].resize(target_size, Image.LANCZOS)
-            logger.info("  Bicubic resize (ESRGAN skipped): %.2fs", time.time() - t)
+        for i in range(len(enhance_images["albedo"])):
+            enhance_images["albedo"][i] = self.models["super_model"](enhance_images["albedo"][i])
+            _check()
+            enhance_images["mr"][i] = self.models["super_model"](enhance_images["mr"][i])
+            _check()
+        logger.info("  ESRGAN super-resolution (%d images): %.2fs",
+                    len(enhance_images["albedo"]) * 2, time.time() - t)
 
         ###########  Bake  ##########
         t = time.time()
