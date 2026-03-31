@@ -186,3 +186,5 @@ hy3dpaint/ckpt/
 save_dir/
 assets/example_images/Benchmark/*
 outputs/*
+benchmark/
+assets/example_images/test_character.png

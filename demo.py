@@ -90,7 +90,7 @@ def process_image(image_path, pipeline_shapegen, paint_pipeline, rembg):
 
     # ========== SHAPE GENERATION ==========
     phase_start = time.time()
-    mesh = pipeline_shapegen(image=image)[0]
+    mesh = pipeline_shapegen(image=image, num_inference_steps=25)[0]
     timings['Shape Generation'] = time.time() - phase_start
 
     phase_start = time.time()
@@ -152,6 +152,7 @@ print("Loading pipelines...")
 phase_start = time.time()
 model_path = 'tencent/Hunyuan3D-2.1'
 pipeline_shapegen = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(model_path)
+pipeline_shapegen.enable_flashvdm(replace_vae=False, mc_algo='mc')
 rembg = BackgroundRemover()
 all_timings['Shape Pipeline Loading'] = time.time() - phase_start
 

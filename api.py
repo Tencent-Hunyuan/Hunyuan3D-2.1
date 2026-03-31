@@ -116,6 +116,7 @@ class PipelineManager:
         from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
         from textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
 
+        load_start = time.time()
         logger.info("Loading ML pipelines...")
 
         # Apply torchvision fix if available
@@ -128,12 +129,20 @@ class PipelineManager:
             pass
 
         # Load shape generation pipeline
+        t = time.time()
         logger.info("Loading shape generation pipeline...")
         model_path = 'tencent/Hunyuan3D-2.1'
         self._shape_pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(model_path)
+        logger.info("Shape pipeline loaded in %.2fs", time.time() - t)
+
+        t = time.time()
+        self._shape_pipeline.enable_flashvdm(replace_vae=False, mc_algo='mc')
+        logger.info("FlashVDM enabled in %.2fs", time.time() - t)
+
         self._rembg = BackgroundRemover()
 
         # Load texture generation pipeline
+        t = time.time()
         logger.info("Loading texture generation pipeline...")
         max_num_view = 4
         resolution = 512
@@ -142,8 +151,9 @@ class PipelineManager:
         conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
         conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
         self._texture_pipeline = Hunyuan3DPaintPipeline(conf)
+        logger.info("Texture pipeline loaded in %.2fs", time.time() - t)
 
-        logger.info("ML pipelines loaded successfully")
+        logger.info("All ML pipelines loaded in %.2fs", time.time() - load_start)
 
     def get_pipelines(self) -> tuple[ShapePipeline, TexturePipeline, BackgroundRemoverType]:
         """Get the ML pipelines, loading them if needed.
@@ -353,6 +363,7 @@ def _process_image_to_glb(
     texture_pipeline: TexturePipeline,
     rembg: BackgroundRemoverType,
     cancel: threading.Event | None = None,
+    num_inference_steps: int = 25,
 ) -> str:
     """Process an image through the 3D generation pipeline.
 
@@ -391,24 +402,32 @@ def _process_image_to_glb(
     loaded_image = Image.open(image_path)
     if loaded_image.mode != "RGB":
         loaded_image = loaded_image.convert("RGB")
+    t = time.time()
     logger.info("Applying background removal...")
     image: Image.Image = rembg(loaded_image)
-    logger.info("Background removal complete")
+    logger.info("Background removal: %.2fs", time.time() - t)
 
     _check()  # checkpoint: after rembg, before shape generation
 
     # Shape generation
+    t = time.time()
     mesh = shape_pipeline(
         image=image,
+        num_inference_steps=num_inference_steps,
         callback=_cancel_callback,
         callback_steps=1,
         check_cancel=_check,
     )[0]
+    logger.info("Shape generation: %.2fs", time.time() - t)
+
+    t = time.time()
     mesh.export(output_glb)
+    logger.info("Shape export: %.2fs", time.time() - t)
 
     _check()  # checkpoint: after shape generation, before texture generation
 
     # Texture generation
+    t = time.time()
     output_mesh_path = texture_pipeline(
         mesh_path=output_glb,
         image_path=image,
@@ -416,12 +435,15 @@ def _process_image_to_glb(
         save_glb=False,
         check_cancel=_check,
     )
+    logger.info("Texture generation: %.2fs", time.time() - t)
 
     _check()  # checkpoint: after texture generation, before export
 
     # Convert to GLB with trimesh
+    t = time.time()
     mesh_textured = trimesh.load(output_mesh_path, force="mesh")
     mesh_textured.export(output_textured_glb)
+    logger.info("GLB conversion: %.2fs", time.time() - t)
 
     # Clean up intermediate files
     cleanup_patterns = [
@@ -446,6 +468,7 @@ def convert_image_to_3d(
     file: UploadFile = File(...),
     cancel_previous: bool = False,
     smooth_normals: bool = False,
+    steps: int = 25,
 ) -> FileResponse | JSONResponse:
     """Convert an uploaded image to a textured 3D GLB model.
 
@@ -492,7 +515,8 @@ def convert_image_to_3d(
         # Get pipelines and process
         shape_pipeline, texture_pipeline, rembg = pipeline_manager.get_pipelines()
         output_path = _process_image_to_glb(
-            temp_path, shape_pipeline, texture_pipeline, rembg, cancel
+            temp_path, shape_pipeline, texture_pipeline, rembg, cancel,
+            num_inference_steps=steps,
         )
         if smooth_normals:
             logger.info("Applying smooth normals to %s", output_path)
