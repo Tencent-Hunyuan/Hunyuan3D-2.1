@@ -273,6 +273,17 @@ def cancel_generation() -> dict[str, str]:
     return {"status": "idle", "message": "No generation in progress"}
 
 
+@app.post("/unload")
+def unload_pipelines() -> dict[str, str]:
+    """Unload ML pipelines and free GPU memory."""
+    with pipeline_manager._lock:
+        was_loaded = pipeline_manager._shape_pipeline is not None
+    pipeline_manager.unload()
+    if was_loaded:
+        return {"status": "unloaded"}
+    return {"status": "already_unloaded"}
+
+
 def _get_file_extension(filename: str) -> str:
     """Get lowercase file extension without the dot."""
     return os.path.splitext(filename)[1].lower().lstrip(".")
