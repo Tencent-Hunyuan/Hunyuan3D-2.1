@@ -49,7 +49,7 @@ uvicorn==0.34.3
 tqdm==4.66.5
 psutil==6.0.0
 
-# GPU Computing (requires CUDA)
+# GPU Computing (requires CUDA, skip on Mac/CPU-only systems)
 cupy-cuda12x==13.4.1
 
 # Blender

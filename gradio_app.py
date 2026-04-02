@@ -47,6 +47,7 @@ import numpy as np
 
 from hy3dshape.utils import logger
 from hy3dpaint.convert_utils import create_glb_with_pbr_materials
+from device_utils import get_default_device, safe_empty_cache
 
 
 MAX_SEED = 1e7
@@ -337,8 +338,10 @@ def generation_all(
     check_box_rembg=False,
     num_chunks=200000,
     randomize_seed: bool = False,
+    progress=gr.Progress(track_tqdm=True),
 ):
     start_time_0 = time.time()
+    progress(0, desc="Generating 3D shape...")
     mesh, image, save_folder, stats, seed = _gen_shape(
         caption,
         image,
@@ -366,6 +369,7 @@ def generation_all(
     # logger.info("---Postprocessing takes %s seconds ---" % (time.time() - tmp_time))
     # stats['time']['postprocessing'] = time.time() - tmp_time
 
+    progress(0.4, desc="Reducing mesh faces...")
     tmp_time = time.time()
     mesh = face_reduce_worker(mesh)
 
@@ -375,14 +379,22 @@ def generation_all(
     logger.info("---Face Reduction takes %s seconds ---" % (time.time() - tmp_time))
     stats['time']['face reduction'] = time.time() - tmp_time
 
+    progress(0.5, desc="Generating textures...")
     tmp_time = time.time()
 
     text_path = os.path.join(save_folder, f'textured_mesh.obj')
-    path_textured = tex_pipeline(mesh_path=path, image_path=image, output_mesh_path=text_path, save_glb=False)
-        
+    try:
+        path_textured = tex_pipeline(mesh_path=path, image_path=image, output_mesh_path=text_path, save_glb=False)
+    except Exception as e:
+        raise gr.Error(
+            f"Texture generation failed: {e}. "
+            "Try reducing octree resolution or using a simpler input image."
+        )
+
     logger.info("---Texture Generation takes %s seconds ---" % (time.time() - tmp_time))
     stats['time']['texture generation'] = time.time() - tmp_time
 
+    progress(0.9, desc="Converting to GLB format...")
     tmp_time = time.time()
     # Convert textured OBJ to GLB using obj2gltf with PBR support
     glb_path_textured = os.path.join(save_folder, 'textured_mesh.glb')
@@ -395,7 +407,7 @@ def generation_all(
                                                          height=HTML_HEIGHT, 
                                                          width=HTML_WIDTH, textured=True)
     if args.low_vram_mode:
-        torch.cuda.empty_cache()
+        safe_empty_cache(args.device)
     return (
         gr.update(value=path),
         gr.update(value=glb_path_textured),
@@ -419,8 +431,10 @@ def shape_generation(
     check_box_rembg=False,
     num_chunks=200000,
     randomize_seed: bool = False,
+    progress=gr.Progress(track_tqdm=True),
 ):
     start_time_0 = time.time()
+    progress(0, desc="Generating 3D shape...")
     mesh, image, save_folder, stats, seed = _gen_shape(
         caption,
         image,
@@ -439,10 +453,11 @@ def shape_generation(
     stats['time']['total'] = time.time() - start_time_0
     mesh.metadata['extras'] = stats
 
+    progress(0.9, desc="Exporting mesh...")
     path = export_mesh(mesh, save_folder, textured=False)
     model_viewer_html = build_model_viewer_html(save_folder, height=HTML_HEIGHT, width=HTML_WIDTH)
     if args.low_vram_mode:
-        torch.cuda.empty_cache()
+        safe_empty_cache(args.device)
     return (
         gr.update(value=path),
         model_viewer_html,
@@ -553,20 +568,27 @@ Fast for very complex cases, Standard seldom use.',
                             step=1,
                             value=1234,
                             min_width=100,
+                            info='Same seed + input = same output',
                         )
                         with gr.Row():
                             num_steps = gr.Slider(maximum=100,
                                                   minimum=1,
                                                   value=5 if 'turbo' in args.subfolder else 30,
-                                                  step=1, label='Inference Steps')
-                            octree_resolution = gr.Slider(maximum=512, 
-                                                          minimum=16, 
-                                                          value=256, 
-                                                          label='Octree Resolution')
+                                                  step=1, label='Inference Steps',
+                                                  info='More steps = higher quality but slower')
+                            octree_resolution = gr.Slider(maximum=512,
+                                                          minimum=16,
+                                                          value=256,
+                                                          label='Octree Resolution',
+                                                          info='Mesh detail level. 256 recommended')
                         with gr.Row():
-                            cfg_scale = gr.Number(value=5.0, label='Guidance Scale', min_width=100)
+                            cfg_scale = gr.Slider(minimum=1.0, maximum=20.0, value=5.0, step=0.5,
+                                                  label='Guidance Scale',
+                                                  info='Higher = more faithful to input (1-20)',
+                                                  min_width=100)
                             num_chunks = gr.Slider(maximum=5000000, minimum=1000, value=8000,
-                                                   label='Number of Chunks', min_width=100)
+                                                   label='Number of Chunks', min_width=100,
+                                                   info='Memory vs speed tradeoff. 8000 recommended')
                     with gr.Tab("Export", id='tab_export'):
                         with gr.Row():
                             file_type = gr.Dropdown(label='File Type', 
@@ -577,7 +599,8 @@ Fast for very complex cases, Standard seldom use.',
                             export_texture = gr.Checkbox(label='Include Texture', value=False,
                                                          visible=False, min_width=100)
                         target_face_num = gr.Slider(maximum=1000000, minimum=100, value=10000,
-                                                    label='Target Face Number')
+                                                    label='Target Face Number',
+                                                    info='Target polygon count after simplification')
                         with gr.Row():
                             confirm_export = gr.Button(value="Transform", min_width=100)
                             file_export = gr.DownloadButton(label="Download", variant='primary',
@@ -739,7 +762,8 @@ if __name__ == '__main__':
     parser.add_argument("--texgen_model_path", type=str, default='tencent/Hunyuan3D-2.1')
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--host', type=str, default='0.0.0.0')
-    parser.add_argument('--device', type=str, default='cuda')
+    parser.add_argument('--device', type=str, default=None,
+                        help='Device to use (auto-detected if not specified: cuda > mps > cpu)')
     parser.add_argument('--mc_algo', type=str, default='mc')
     parser.add_argument('--cache-path', type=str, default='./save_dir')
     parser.add_argument('--enable_t23d', action='store_true')
@@ -748,7 +772,11 @@ if __name__ == '__main__':
     parser.add_argument('--compile', action='store_true')
     parser.add_argument('--low_vram_mode', action='store_true')
     args = parser.parse_args()
-    
+
+    if args.device is None:
+        args.device = get_default_device()
+    print(f"Using device: {args.device}")
+
     SAVE_DIR = args.cache_path
     os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -761,8 +789,9 @@ if __name__ == '__main__':
     HTML_OUTPUT_PLACEHOLDER = f"""
     <div style='height: {650}px; width: 100%; border-radius: 8px; border-color: #e5e7eb; border-style: solid; border-width: 1px; display: flex; justify-content: center; align-items: center;'>
       <div style='text-align: center; font-size: 16px; color: #6b7280;'>
-        <p style="color: #8d8d8d;">Welcome to Hunyuan3D!</p>
-        <p style="color: #8d8d8d;">No mesh here.</p>
+        <p style="color: #8d8d8d;">Welcome to Hunyuan3D 2.1!</p>
+        <p style="color: #8d8d8d;">Upload an image and click Generate.</p>
+        <p style="color: #b0b0b0; font-size: 13px;">Shape generation: ~30s | With texture: ~60s</p>
       </div>
     </div>
     """
@@ -859,7 +888,7 @@ if __name__ == '__main__':
     shutil.copytree('./assets/env_maps', os.path.join(static_dir, 'env_maps'), dirs_exist_ok=True)
 
     if args.low_vram_mode:
-        torch.cuda.empty_cache()
+        safe_empty_cache(args.device)
     demo = build_app()
     app = gr.mount_gradio_app(app, demo, path="/")
     uvicorn.run(app, host=args.host, port=args.port)
