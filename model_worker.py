@@ -28,6 +28,7 @@ from hy3dshape.rembg import BackgroundRemover
 from hy3dshape.utils import logger
 from textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
 from hy3dpaint.convert_utils import create_glb_with_pbr_materials
+from device_utils import safe_empty_cache
 
 
 def quick_convert_with_obj2gltf(obj_path: str, glb_path: str):
@@ -212,7 +213,7 @@ class ModelWorker:
             logger.warning(f"Using untextured mesh as fallback: {final_save_path}")
 
         if self.low_vram_mode:
-            torch.cuda.empty_cache()
+            safe_empty_cache(self.device)
             
         logger.info("---Total generation takes %s seconds ---" % (time.time() - start_time))
         return final_save_path, uid 
