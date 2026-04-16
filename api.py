@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
+import numpy as np
 import torch
 import trimesh
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -450,9 +451,28 @@ def _process_image_to_glb(
 
     _check()  # checkpoint: after texture generation, before export
 
-    # Convert to GLB with trimesh
+    # Convert to GLB with trimesh, embedding PBR textures
     t = time.time()
     mesh_textured = trimesh.load(output_mesh_path, force="mesh")
+
+    metallic_path = output_mesh_path.replace(".obj", "_metallic.jpg")
+    roughness_path = output_mesh_path.replace(".obj", "_roughness.jpg")
+    if os.path.isfile(metallic_path) and os.path.isfile(roughness_path):
+        metallic_img = Image.open(metallic_path).convert("L")
+        roughness_img = Image.open(roughness_path).convert("L")
+        if metallic_img.size != roughness_img.size:
+            roughness_img = roughness_img.resize(metallic_img.size)
+        # glTF spec: metallicRoughnessTexture G=roughness, B=metallic
+        w, h = metallic_img.size
+        mr_array = np.zeros((h, w, 3), dtype=np.uint8)
+        mr_array[:, :, 0] = 255  # R: occlusion (unused, white = no effect)
+        mr_array[:, :, 1] = np.array(roughness_img)
+        mr_array[:, :, 2] = np.array(metallic_img)
+        mesh_textured.visual.material.metallicRoughnessTexture = Image.fromarray(mr_array)
+        mesh_textured.visual.material.metallicFactor = 1.0
+        mesh_textured.visual.material.roughnessFactor = 1.0
+        logger.info("Embedded PBR metallic-roughness texture in GLB")
+
     mesh_textured.export(output_textured_glb)
     logger.info("GLB conversion: %.2fs", time.time() - t)
 
@@ -462,8 +482,8 @@ def _process_image_to_glb(
         output_textured_obj,
         output_mesh_path.replace(".obj", ".mtl"),
         output_mesh_path.replace(".obj", ".jpg"),
-        output_mesh_path.replace(".obj", "_metallic.jpg"),
-        output_mesh_path.replace(".obj", "_roughness.jpg"),
+        metallic_path,
+        roughness_path,
         os.path.join(output_dir, "white_mesh_remesh.obj"),
     ]
     for pattern in cleanup_patterns:
