@@ -468,9 +468,14 @@ def _process_image_to_glb(
         mr_array[:, :, 0] = 255  # R: occlusion (unused, white = no effect)
         mr_array[:, :, 1] = np.array(roughness_img)
         mr_array[:, :, 2] = np.array(metallic_img)
-        mesh_textured.visual.material.metallicRoughnessTexture = Image.fromarray(mr_array)
-        mesh_textured.visual.material.metallicFactor = 1.0
-        mesh_textured.visual.material.roughnessFactor = 1.0
+        # OBJ loader produces SimpleMaterial; replace with PBRMaterial for GLB export
+        base_color = getattr(mesh_textured.visual.material, 'image', None)
+        mesh_textured.visual.material = trimesh.visual.material.PBRMaterial(
+            baseColorTexture=base_color,
+            metallicRoughnessTexture=Image.fromarray(mr_array),
+            metallicFactor=1.0,
+            roughnessFactor=1.0,
+        )
         logger.info("Embedded PBR metallic-roughness texture in GLB")
 
     mesh_textured.export(output_textured_glb)
