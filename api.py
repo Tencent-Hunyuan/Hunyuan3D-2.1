@@ -457,6 +457,7 @@ def _process_image_to_glb(
 
     metallic_path = output_mesh_path.replace(".obj", "_metallic.jpg")
     roughness_path = output_mesh_path.replace(".obj", "_roughness.jpg")
+    normal_path = output_mesh_path.replace(".obj", "_normal.jpg")
     if os.path.isfile(metallic_path) and os.path.isfile(roughness_path):
         metallic_img = Image.open(metallic_path).convert("L")
         roughness_img = Image.open(roughness_path).convert("L")
@@ -468,15 +469,17 @@ def _process_image_to_glb(
         mr_array[:, :, 0] = 255  # R: occlusion (unused, white = no effect)
         mr_array[:, :, 1] = np.array(roughness_img)
         mr_array[:, :, 2] = np.array(metallic_img)
+        normal_img = Image.open(normal_path) if os.path.isfile(normal_path) else None
         # OBJ loader produces SimpleMaterial; replace with PBRMaterial for GLB export
         base_color = getattr(mesh_textured.visual.material, 'image', None)
         mesh_textured.visual.material = trimesh.visual.material.PBRMaterial(
             baseColorTexture=base_color,
             metallicRoughnessTexture=Image.fromarray(mr_array),
+            normalTexture=normal_img,
             metallicFactor=1.0,
             roughnessFactor=1.0,
         )
-        logger.info("Embedded PBR metallic-roughness texture in GLB")
+        logger.info("Embedded PBR textures in GLB (normal=%s)", normal_img is not None)
 
     mesh_textured.export(output_textured_glb)
     logger.info("GLB conversion: %.2fs", time.time() - t)
@@ -489,6 +492,7 @@ def _process_image_to_glb(
         output_mesh_path.replace(".obj", ".jpg"),
         metallic_path,
         roughness_path,
+        normal_path,
         os.path.join(output_dir, "white_mesh_remesh.obj"),
     ]
     for pattern in cleanup_patterns:
