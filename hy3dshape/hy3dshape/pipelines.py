@@ -303,6 +303,7 @@ class Hunyuan3DDiTPipeline:
             self.vae.to(device)
             self.model.to(device)
             self.conditioner.to(device)
+        return self
 
     @property
     def _execution_device(self):
