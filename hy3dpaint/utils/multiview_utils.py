@@ -44,7 +44,8 @@ class multiviewDiffusionNet:
         pipeline = DiffusionPipeline.from_pretrained(
             model_path,
             custom_pipeline=custom_pipeline, 
-            torch_dtype=torch.float16
+            torch_dtype=torch.float16,
+            trust_remote_code=True,
         )
 
         pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config, timestep_spacing="trailing")
