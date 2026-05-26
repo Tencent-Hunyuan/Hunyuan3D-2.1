@@ -168,11 +168,13 @@ class PipelineManager:
             self._last_usage = time.time()
             return self._shape_pipeline, self._texture_pipeline, self._rembg
 
-    def unload(self) -> None:
-        """Unload pipelines and free GPU memory."""
+    def unload(self, reason: str = "external request") -> None:
+        """Unload pipelines and free GPU memory. ``reason`` is logged so
+        operators can tell idle-timeout unloads from orchestrator-driven
+        peer-sidecar rotations (UNLOAD_SIDECARS=true) and cancel fanouts."""
         with self._lock:
             if self._shape_pipeline is not None:
-                logger.info("Unloading ML pipelines due to inactivity...")
+                logger.info("Unloading ML pipelines (%s)...", reason)
                 del self._shape_pipeline
                 self._shape_pipeline = None
             if self._texture_pipeline is not None:
@@ -208,7 +210,7 @@ class PipelineManager:
                 ):
                     should_unload = True
             if should_unload:
-                self.unload()
+                self.unload(reason="inactivity")
 
     def start_checker(self) -> None:
         """Start the background inactivity checker thread."""
@@ -240,7 +242,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     yield
     # Shutdown: stop checker and unload pipelines
     pipeline_manager.stop_checker()
-    pipeline_manager.unload()
+    pipeline_manager.unload(reason="shutdown")
 
 
 app = FastAPI(
@@ -279,7 +281,7 @@ def unload_pipelines() -> dict[str, str]:
     """Unload ML pipelines and free GPU memory."""
     with pipeline_manager._lock:
         was_loaded = pipeline_manager._shape_pipeline is not None
-    pipeline_manager.unload()
+    pipeline_manager.unload(reason="external /unload request")
     if was_loaded:
         return {"status": "unloaded"}
     return {"status": "already_unloaded"}
