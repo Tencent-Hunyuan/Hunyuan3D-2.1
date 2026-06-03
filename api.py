@@ -378,6 +378,8 @@ def _process_image_to_glb(
     rembg: BackgroundRemoverType,
     cancel: threading.Event | None = None,
     num_inference_steps: int = 25,
+    octree_resolution: int = 384,
+    mc_algo: str | None = None,
 ) -> str:
     """Process an image through the 3D generation pipeline.
 
@@ -387,6 +389,12 @@ def _process_image_to_glb(
         texture_pipeline: Texture generation pipeline
         rembg: Background remover
         cancel: Optional event; if set, this request has been preempted
+        num_inference_steps: Shape DiT denoising steps
+        octree_resolution: Shape extraction grid resolution (pipeline default 384;
+            raise for sharper geometry at the cost of VRAM, which scales ~grid^3)
+        mc_algo: Surface extractor override ("mc" / "dmc" / None). None leaves
+            whatever enable_flashvdm installed (FlashVDM uses "mc"). "dmc"
+            requires the `diso` package to be installed.
 
     Returns:
         Path to the generated textured GLB file
@@ -423,15 +431,21 @@ def _process_image_to_glb(
 
     _check()  # checkpoint: after rembg, before shape generation
 
-    # Shape generation
+    # Shape generation. mc_algo is only forwarded when set so the default path
+    # leaves FlashVDM's surface extractor untouched (passing mc_algo=anything
+    # triggers a deprecation warning in the pipeline).
+    shape_kwargs: dict[str, object] = {
+        "image": image,
+        "num_inference_steps": num_inference_steps,
+        "callback": _cancel_callback,
+        "callback_steps": 1,
+        "check_cancel": _check,
+        "octree_resolution": octree_resolution,
+    }
+    if mc_algo is not None:
+        shape_kwargs["mc_algo"] = mc_algo
     t = time.time()
-    mesh = shape_pipeline(
-        image=image,
-        num_inference_steps=num_inference_steps,
-        callback=_cancel_callback,
-        callback_steps=1,
-        check_cancel=_check,
-    )[0]
+    mesh = shape_pipeline(**shape_kwargs)[0]
     logger.info("Shape generation: %.2fs", time.time() - t)
 
     t = time.time()
@@ -514,6 +528,9 @@ def convert_image_to_3d(
     texture_steps: int = 8,  # Hunyuan3D v2.1 default is 15 steps for texture generation, default to 8 for faster results
     texture_views: int = 4,  # Hunyuan3D v2.1 default is 6 views for texture generation, default to 4 for faster results
     fast_remesh: bool = False,
+    octree_resolution: int = 384,  # Shape extraction grid resolution. Pipeline default is 384; higher = sharper geometry, VRAM scales ~grid^3 (512 ≈ 2.4×, 768 ≈ 8×).
+    texture_resolution: int = 512,  # Multiview diffusion render resolution. Pipeline init uses 512; higher = sharper PBR textures.
+    mc_algo: str | None = None,  # Surface extractor override ("mc" or "dmc"). None = leave whatever enable_flashvdm installed (FlashVDM uses "mc"). "dmc" needs `diso`.
 ) -> FileResponse | JSONResponse:
     """Convert an uploaded image to a textured 3D GLB model.
 
@@ -559,16 +576,22 @@ def convert_image_to_3d(
 
         # Get pipelines and process
         shape_pipeline, texture_pipeline, rembg = pipeline_manager.get_pipelines()
-        # Apply per-request texture config overrides
+        # Apply per-request texture config overrides. `resolution` is read by
+        # the texture pipeline at each call (forwarded as `custom_view_size`),
+        # so mutating it here changes the multiview diffusion render size
+        # without a pipeline reload.
         texture_pipeline.config.texture_steps = texture_steps
         texture_pipeline.config.max_selected_view_num = texture_views
         texture_pipeline.config.fast_remesh = fast_remesh
+        texture_pipeline.config.resolution = texture_resolution
         if hasattr(texture_pipeline.models.get("multiview_model", None) or object(), "num_inference_steps"):
             texture_pipeline.models["multiview_model"].num_inference_steps = texture_steps
 
         output_path = _process_image_to_glb(
             temp_path, shape_pipeline, texture_pipeline, rembg, cancel,
             num_inference_steps=steps,
+            octree_resolution=octree_resolution,
+            mc_algo=mc_algo,
         )
         if smooth_normals:
             logger.info("Applying smooth normals to %s", output_path)
