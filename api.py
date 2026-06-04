@@ -91,6 +91,10 @@ class PreemptionManager:
             self._cancel.set()
             return self._processing.locked()
 
+    def busy(self) -> bool:
+        """True while a request holds the processing slot."""
+        return self._processing.locked()
+
     def wait_idle(self, timeout: float) -> bool:
         """Acquire the processing slot, waiting up to ``timeout`` seconds.
 
@@ -481,14 +485,23 @@ def _self_terminate() -> None:
 
 
 @app.post("/kill")
-def kill() -> JSONResponse:
+def kill(reclaim: bool = False) -> JSONResponse:
     """Self-exit for guaranteed GPU-memory reclaim; compose restart respawns.
 
-    Unconditional by design (no idle short-circuit): the caller's use case is
-    reclaiming memory that /unload could not free, which happens precisely
-    when the process is idle. Status contract matches the orchestrating
-    memory manager's kill convention.
+    No idle short-circuit: the caller's use case is reclaiming memory that
+    /unload could not free, which happens precisely when the process is
+    idle. ``?reclaim=true`` additionally refuses while a generation holds
+    the processing slot — a reclaim kill targets idle context floors and
+    must not abort another orchestrator's in-flight request. Status
+    contract matches the orchestrating memory manager's kill convention.
     """
+    if reclaim and preemption.busy():
+        return JSONResponse(
+            content={
+                "status": "busy",
+                "message": "Generation in progress; refusing reclaim kill",
+            },
+        )
     if not _kill_once.acquire(blocking=False):
         return JSONResponse(
             content={"status": "already-killing", "exit_delay_s": KILL_EXIT_DELAY_S},

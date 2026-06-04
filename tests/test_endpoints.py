@@ -360,6 +360,25 @@ class TestKill:
         resp = client.post("/kill")
         assert resp.json()["status"] == "already-killing"
 
+    def test_reclaim_kill_refuses_while_busy(self, client, mock_exit):
+        """?reclaim=true must not abort an in-flight generation — it exists
+        to reclaim *idle* context floors."""
+        import api as api_module
+
+        assert api_module.preemption.wait_idle(timeout=1.0)
+        try:
+            resp = client.post("/kill", params={"reclaim": "true"})
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "busy"
+            mock_exit.assert_not_called()
+        finally:
+            api_module.preemption.end()
+
+    def test_reclaim_kill_exits_when_idle(self, client, mock_exit):
+        resp = client.post("/kill", params={"reclaim": "true"})
+        assert resp.json()["status"] == "killing"
+        mock_exit.assert_called_once_with(137)
+
 
 class TestUnloadWaitsForSlot:
     """POST /unload must not delete pipelines under an in-flight request."""
