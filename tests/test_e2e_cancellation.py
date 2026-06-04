@@ -260,9 +260,12 @@ class TestE2ECancelDuringTextureGeneration:
         vae = _make_vae(_fast_volume_decoder, _dummy_surface_extractor)
         shape = _make_shape_pipeline(vae, mock_mesh)
 
+        # MagicMock wrapper absorbs the per-request config mutation the
+        # endpoint applies (texture_pipeline.config.*), like the
+        # mock_texture_pipeline fixture does.
         with patch.object(
             pipeline_manager, "get_pipelines",
-            return_value=(shape, blocking_texture_pipeline, mock_rembg),
+            return_value=(shape, MagicMock(side_effect=blocking_texture_pipeline), mock_rembg),
         ), patch("api.trimesh.load", mock_trimesh_load):
             from starlette.testclient import TestClient
             client = TestClient(app)

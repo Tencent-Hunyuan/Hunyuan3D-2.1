@@ -4,6 +4,7 @@ import sys
 sys.path.insert(0, './hy3dshape')
 sys.path.insert(0, './hy3dpaint')
 
+import functools
 import gc
 import glob
 import logging
@@ -21,6 +22,7 @@ import torch
 import trimesh
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.background import BackgroundTask
 from PIL import Image
 
 # Configure logging
@@ -89,6 +91,16 @@ class PreemptionManager:
             self._cancel.set()
             return self._processing.locked()
 
+    def wait_idle(self, timeout: float) -> bool:
+        """Acquire the processing slot, waiting up to ``timeout`` seconds.
+
+        Lets ``/unload`` wait for the in-flight request to reach a cancel
+        checkpoint and unwind before pipelines are deleted — deleting while
+        the request thread still holds pipeline refs frees nothing, and the
+        next load then doubles resident GPU memory. Returns False on timeout.
+        """
+        return self._processing.acquire(timeout=timeout)
+
     @staticmethod
     def check(cancel: threading.Event) -> None:
         """Raise ``PreemptedError`` if this request has been superseded."""
@@ -111,52 +123,66 @@ class PipelineManager:
         self._checker_thread: threading.Thread | None = None
         self._stop_checker = threading.Event()
 
-    def _load_pipelines(self) -> None:
-        """Load the ML pipelines. Must be called with lock held."""
-        from hy3dshape.rembg import BackgroundRemover
-        from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
-        from textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
+    def _load_pipelines(self, check_cancel=None) -> None:
+        """Load the ML pipelines. Must be called with lock held.
 
+        ``check_cancel`` raises between sub-loads so a cancel issued during
+        the cold load aborts within one sub-load instead of after all of
+        them. On abort (or any failure) partially-loaded pipelines are
+        dropped so the next request sees a consistent unloaded state.
+        """
+        check_cancel = check_cancel or (lambda: None)
         load_start = time.time()
         logger.info("Loading ML pipelines...")
-
-        # Apply torchvision fix if available
         try:
-            from torchvision_fix import apply_fix
-            apply_fix()
-        except ImportError:
-            pass
-        except Exception:
-            pass
+            from hy3dshape.rembg import BackgroundRemover
+            from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
+            from textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
 
-        # Load shape generation pipeline
-        t = time.time()
-        logger.info("Loading shape generation pipeline...")
-        model_path = 'tencent/Hunyuan3D-2.1'
-        self._shape_pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(model_path)
-        logger.info("Shape pipeline loaded in %.2fs", time.time() - t)
+            # Apply torchvision fix if available
+            try:
+                from torchvision_fix import apply_fix
+                apply_fix()
+            except ImportError:
+                pass
+            except Exception:
+                pass
 
-        t = time.time()
-        self._shape_pipeline.enable_flashvdm(replace_vae=False, mc_algo='mc')
-        logger.info("FlashVDM enabled in %.2fs", time.time() - t)
+            # Load shape generation pipeline
+            t = time.time()
+            logger.info("Loading shape generation pipeline...")
+            model_path = 'tencent/Hunyuan3D-2.1'
+            self._shape_pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(model_path)
+            logger.info("Shape pipeline loaded in %.2fs", time.time() - t)
 
-        self._rembg = BackgroundRemover()
+            t = time.time()
+            self._shape_pipeline.enable_flashvdm(replace_vae=False, mc_algo='mc')
+            logger.info("FlashVDM enabled in %.2fs", time.time() - t)
 
-        # Load texture generation pipeline
-        t = time.time()
-        logger.info("Loading texture generation pipeline...")
-        max_num_view = 4
-        resolution = 512
-        conf = Hunyuan3DPaintConfig(max_num_view, resolution, texture_steps=8)
-        conf.realesrgan_ckpt_path = "hy3dpaint/ckpt/RealESRGAN_x4plus.pth"
-        conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
-        conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
-        self._texture_pipeline = Hunyuan3DPaintPipeline(conf)
-        logger.info("Texture pipeline loaded in %.2fs", time.time() - t)
+            check_cancel()  # checkpoint: shape pipeline up, texture load not yet started
 
-        logger.info("All ML pipelines loaded in %.2fs", time.time() - load_start)
+            self._rembg = BackgroundRemover()
 
-    def get_pipelines(self) -> tuple[ShapePipeline, TexturePipeline, BackgroundRemoverType]:
+            check_cancel()  # checkpoint: before the texture pipeline load
+
+            # Load texture generation pipeline
+            t = time.time()
+            logger.info("Loading texture generation pipeline...")
+            max_num_view = 4
+            resolution = 512
+            conf = Hunyuan3DPaintConfig(max_num_view, resolution, texture_steps=8)
+            conf.realesrgan_ckpt_path = "hy3dpaint/ckpt/RealESRGAN_x4plus.pth"
+            conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
+            conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
+            self._texture_pipeline = Hunyuan3DPaintPipeline(conf)
+            logger.info("Texture pipeline loaded in %.2fs", time.time() - t)
+
+            logger.info("All ML pipelines loaded in %.2fs", time.time() - load_start)
+        except BaseException:
+            self._unload_locked(reason="aborted mid-load")
+            raise
+
+    def get_pipelines(self, check_cancel=None) -> tuple[ShapePipeline, TexturePipeline, BackgroundRemoverType]:
         """Get the ML pipelines, loading them if needed.
 
         Returns:
@@ -164,30 +190,42 @@ class PipelineManager:
         """
         with self._lock:
             if self._shape_pipeline is None:
-                self._load_pipelines()
+                self._load_pipelines(check_cancel)
             self._last_usage = time.time()
             return self._shape_pipeline, self._texture_pipeline, self._rembg
 
-    def unload(self, reason: str = "external request") -> None:
-        """Unload pipelines and free GPU memory. ``reason`` is logged so
-        operators can tell idle-timeout unloads from orchestrator-driven
-        peer-sidecar rotations (UNLOAD_SIDECARS=true) and cancel fanouts."""
+    def unload(self, reason: str = "external request") -> bool:
+        """Unload pipelines and free GPU memory; returns whether anything
+        was loaded. ``reason`` is logged so operators can tell idle-timeout
+        unloads from orchestrator-driven peer-sidecar rotations
+        (UNLOAD_SIDECARS=true) and cancel fanouts."""
         with self._lock:
-            if self._shape_pipeline is not None:
-                logger.info("Unloading ML pipelines (%s)...", reason)
-                del self._shape_pipeline
-                self._shape_pipeline = None
-            if self._texture_pipeline is not None:
-                del self._texture_pipeline
-                self._texture_pipeline = None
-            if self._rembg is not None:
-                del self._rembg
-                self._rembg = None
-            self._last_usage = None
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            logger.info("ML pipelines unloaded, GPU memory freed")
+            return self._unload_locked(reason)
+
+    def _unload_locked(self, reason: str) -> bool:
+        """``unload`` body for callers that already hold ``self._lock``."""
+        was_loaded = self._shape_pipeline is not None
+        if was_loaded:
+            logger.info("Unloading ML pipelines (%s)...", reason)
+            del self._shape_pipeline
+            self._shape_pipeline = None
+        if self._texture_pipeline is not None:
+            del self._texture_pipeline
+            self._texture_pipeline = None
+        if self._rembg is not None:
+            del self._rembg
+            self._rembg = None
+        self._last_usage = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        logger.info("ML pipelines unloaded, GPU memory freed")
+        return was_loaded
+
+    def status(self) -> tuple[bool, float | None]:
+        """(loaded, last_usage) snapshot for ``/state``."""
+        with self._lock:
+            return self._shape_pipeline is not None, self._last_usage
 
     def _checker_loop(self) -> None:
         """Background thread that checks for inactivity and unloads pipelines."""
@@ -276,15 +314,190 @@ def cancel_generation() -> dict[str, str]:
     return {"status": "idle", "message": "No generation in progress"}
 
 
+# How long /unload waits for the in-flight request to reach a cancel
+# checkpoint. Sized to the orchestrating memory manager's unload timeout.
+UNLOAD_WAIT_S = 30.0
+
+# Grace before /kill's os._exit so the 200 body reaches the caller.
+KILL_EXIT_DELAY_S = 0.2
+
+# First /kill wins this lock and never releases; later calls see it held.
+_kill_once = threading.Lock()
+
+
 @app.post("/unload")
-def unload_pipelines() -> dict[str, str]:
-    """Unload ML pipelines and free GPU memory."""
-    with pipeline_manager._lock:
-        was_loaded = pipeline_manager._shape_pipeline is not None
-    pipeline_manager.unload(reason="external /unload request")
+def unload_pipelines():
+    """Unload ML pipelines and free GPU memory.
+
+    Waits for the processing slot first: deleting pipelines while a request
+    thread still holds them frees nothing (the refs keep the tensors alive)
+    and the next load doubles resident GPU memory. Callers cancel before
+    unloading, so the slot frees at the next cancel checkpoint.
+    """
+    if not preemption.wait_idle(timeout=UNLOAD_WAIT_S):
+        logger.warning(
+            "/unload: request still in flight after %.0fs; refusing to unload under it",
+            UNLOAD_WAIT_S,
+        )
+        return JSONResponse(status_code=503, content={"status": "busy"})
+    try:
+        was_loaded = pipeline_manager.unload(reason="external /unload request")
+    finally:
+        preemption.end()
     if was_loaded:
         return {"status": "unloaded"}
     return {"status": "already_unloaded"}
+
+
+def _read_meminfo_kb() -> dict:
+    """/proc/meminfo as {key: kB}, or {} when unreadable."""
+    info = {}
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                key, _, rest = line.partition(":")
+                parts = rest.split()
+                if parts:
+                    info[key] = int(parts[0])  # kB
+    except OSError:
+        pass
+    return info
+
+
+@functools.cache
+def _is_unified_memory() -> bool:
+    try:
+        return torch.cuda.get_device_properties(0).is_integrated
+    except Exception:
+        return False
+
+
+def _vram_info_mb() -> tuple:
+    """(free_mb, total_mb) for /state, or (None, None) when unavailable.
+
+    On unified-memory hosts (DGX Spark / GB10) ``torch.cuda.mem_get_info``
+    reflects kernel MemFree only — page cache shows as used even though
+    cudaMalloc can reclaim it — so report MemAvailable/MemTotal instead.
+    """
+    try:
+        if not torch.cuda.is_available():
+            return None, None
+        if _is_unified_memory():
+            info = _read_meminfo_kb()
+            avail, total = info.get("MemAvailable"), info.get("MemTotal")
+            if avail is None or total is None:
+                return None, None
+            return avail // 1024, total // 1024
+        free_b, total_b = torch.cuda.mem_get_info()
+        return free_b // (1024 * 1024), total_b // (1024 * 1024)
+    except Exception:
+        return None, None
+
+
+# --- Unified-memory page-cache survival. On GB10, cudaMalloc fails when
+# kernel MemFree is low even though MemAvailable (reclaimable page cache) is
+# plentiful; NVIDIA's workaround is dropping the page cache. Requires a
+# privileged container (writable /proc/sys); silently skipped otherwise — no
+# CPU-buffer fallback, that thrashes once swap fills.
+
+_PAGE_CACHE_RESERVE_GB = int(os.environ.get("PAGE_CACHE_RESERVE_GB", "20"))
+_PAGE_CACHE_COOLDOWN_S = 5.0
+_page_cache_last_drop = 0.0
+_drop_caches_denied_logged = False
+
+
+def _try_drop_caches() -> bool:
+    try:
+        os.sync()
+        with open("/proc/sys/vm/drop_caches", "w") as f:
+            f.write("3\n")
+        return True
+    except OSError:
+        return False
+
+
+def free_page_cache_if_needed() -> None:
+    global _page_cache_last_drop, _drop_caches_denied_logged
+    if not _is_unified_memory():
+        return
+    now = time.monotonic()
+    if now - _page_cache_last_drop < _PAGE_CACHE_COOLDOWN_S:
+        return
+    free_kb = _read_meminfo_kb().get("MemFree")
+    if free_kb is None or free_kb >= _PAGE_CACHE_RESERVE_GB * 1024 * 1024:
+        return
+    _page_cache_last_drop = now
+    if _try_drop_caches():
+        logger.info(
+            "Dropped page cache (MemFree was %.1f GB, reserve %d GB)",
+            free_kb / 1024 / 1024, _PAGE_CACHE_RESERVE_GB,
+        )
+    elif not _drop_caches_denied_logged:
+        _drop_caches_denied_logged = True
+        logger.warning(
+            "Cannot drop page cache (/proc/sys read-only — container not "
+            "privileged?); cudaMalloc may fail under page-cache pressure",
+        )
+
+
+def _patch_module_to() -> None:
+    """Drop page cache before any ``.to(cuda)`` move. Idempotent."""
+    if getattr(torch.nn.Module.to, "_page_cache_patched", False):
+        return
+    _orig = torch.nn.Module.to
+
+    def _patched(self, *args, **kwargs):
+        device = kwargs.get("device")
+        if device is None and args and isinstance(args[0], (str, torch.device)):
+            device = args[0]
+        if device is not None and "cuda" in str(device):
+            free_page_cache_if_needed()
+        return _orig(self, *args, **kwargs)
+
+    _patched._page_cache_patched = True
+    torch.nn.Module.to = _patched
+
+
+_patch_module_to()
+
+
+@app.get("/state")
+def state() -> dict:
+    """Load/VRAM state for the orchestrating memory manager (LRU eviction)."""
+    free_mb, total_mb = _vram_info_mb()
+    loaded, last = pipeline_manager.status()
+    return {
+        "status": "ok" if loaded else "idle",
+        "loaded": loaded,
+        "last_activity_ts": last,
+        "vram_free_mb": free_mb,
+        "vram_total_mb": total_mb,
+    }
+
+
+def _self_terminate() -> None:
+    time.sleep(KILL_EXIT_DELAY_S)
+    os._exit(137)
+
+
+@app.post("/kill")
+def kill() -> JSONResponse:
+    """Self-exit for guaranteed GPU-memory reclaim; compose restart respawns.
+
+    Unconditional by design (no idle short-circuit): the caller's use case is
+    reclaiming memory that /unload could not free, which happens precisely
+    when the process is idle. Status contract matches the orchestrating
+    memory manager's kill convention.
+    """
+    if not _kill_once.acquire(blocking=False):
+        return JSONResponse(
+            content={"status": "already-killing", "exit_delay_s": KILL_EXIT_DELAY_S},
+        )
+    logger.warning("Kill requested; process will exit in %.1fs", KILL_EXIT_DELAY_S)
+    return JSONResponse(
+        content={"status": "killing", "exit_delay_s": KILL_EXIT_DELAY_S},
+        background=BackgroundTask(_self_terminate),
+    )
 
 
 def _get_file_extension(filename: str) -> str:
@@ -573,9 +786,12 @@ def convert_image_to_3d(
         # GPU access (the scheduler has mutable state that is not thread-safe).
         cancel = preemption.begin(cancel_previous=cancel_previous)
         preemption.check(cancel)
+        free_page_cache_if_needed()
 
         # Get pipelines and process
-        shape_pipeline, texture_pipeline, rembg = pipeline_manager.get_pipelines()
+        shape_pipeline, texture_pipeline, rembg = pipeline_manager.get_pipelines(
+            check_cancel=lambda: preemption.check(cancel),
+        )
         # Apply per-request texture config overrides. `resolution` is read by
         # the texture pipeline at each call (forwarded as `custom_view_size`),
         # so mutating it here changes the multiview diffusion render size
