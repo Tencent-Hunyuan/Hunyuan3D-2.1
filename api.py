@@ -112,6 +112,22 @@ class PreemptionManager:
             raise PreemptedError("Request preempted by a newer request")
 
 
+def _malloc_trim() -> None:
+    """Return freed heap memory to the OS after dropping the pipelines.
+
+    ``del`` + ``gc.collect()`` free the Python objects, but glibc keeps the
+    pages in its arena, so the process RSS doesn't fall. On unified memory that
+    RSS still counts against the one shared pool — so the orchestrator's
+    ``MemAvailable`` gate never sees the unload (hunyuan holds ~18 GB host RSS,
+    ~0 VRAM). ``malloc_trim(0)`` hands the arena back. Best-effort."""
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
 class PipelineManager:
     """Manages ML pipelines with lazy loading and automatic unloading after inactivity."""
 
@@ -223,7 +239,8 @@ class PipelineManager:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        logger.info("ML pipelines unloaded, GPU memory freed")
+        _malloc_trim()
+        logger.info("ML pipelines unloaded, GPU + host memory freed")
         return was_loaded
 
     def status(self) -> tuple[bool, float | None]:
