@@ -9,6 +9,7 @@ import gc
 import glob
 import logging
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -143,8 +144,18 @@ class PipelineManager:
         self._checker_thread: threading.Thread | None = None
         self._stop_checker = threading.Event()
 
-    def _load_pipelines(self, check_cancel=None) -> None:
-        """Load the ML pipelines. Must be called with lock held.
+    @staticmethod
+    def _apply_torchvision_fix() -> None:
+        try:
+            from torchvision_fix import apply_fix
+            apply_fix()
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+    def _load_shape_locked(self, check_cancel=None) -> None:
+        """Load the shape pipeline (+ rembg). Must be called with lock held.
 
         ``check_cancel`` raises between sub-loads so a cancel issued during
         the cold load aborts within one sub-load instead of after all of
@@ -152,23 +163,12 @@ class PipelineManager:
         dropped so the next request sees a consistent unloaded state.
         """
         check_cancel = check_cancel or (lambda: None)
-        load_start = time.time()
-        logger.info("Loading ML pipelines...")
         try:
             from hy3dshape.rembg import BackgroundRemover
             from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
-            from textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
 
-            # Apply torchvision fix if available
-            try:
-                from torchvision_fix import apply_fix
-                apply_fix()
-            except ImportError:
-                pass
-            except Exception:
-                pass
+            self._apply_torchvision_fix()
 
-            # Load shape generation pipeline
             t = time.time()
             logger.info("Loading shape generation pipeline...")
             model_path = 'tencent/Hunyuan3D-2.1'
@@ -179,13 +179,31 @@ class PipelineManager:
             self._shape_pipeline.enable_flashvdm(replace_vae=False, mc_algo='mc')
             logger.info("FlashVDM enabled in %.2fs", time.time() - t)
 
-            check_cancel()  # checkpoint: shape pipeline up, texture load not yet started
+            check_cancel()  # checkpoint: shape pipeline up
 
-            self._rembg = BackgroundRemover()
+            if self._rembg is None:
+                self._rembg = BackgroundRemover()
+        except BaseException:
+            self._unload_locked(reason="aborted mid-load")
+            raise
+
+    def _load_texture_locked(self, check_cancel=None) -> None:
+        """Load the texture pipeline (+ rembg). Must be called with lock held.
+
+        Same abort semantics as ``_load_shape_locked``.
+        """
+        check_cancel = check_cancel or (lambda: None)
+        try:
+            from hy3dshape.rembg import BackgroundRemover
+            from textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
+
+            self._apply_torchvision_fix()
+
+            if self._rembg is None:
+                self._rembg = BackgroundRemover()
 
             check_cancel()  # checkpoint: before the texture pipeline load
 
-            # Load texture generation pipeline
             t = time.time()
             logger.info("Loading texture generation pipeline...")
             max_num_view = 4
@@ -196,8 +214,6 @@ class PipelineManager:
             conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
             self._texture_pipeline = Hunyuan3DPaintPipeline(conf)
             logger.info("Texture pipeline loaded in %.2fs", time.time() - t)
-
-            logger.info("All ML pipelines loaded in %.2fs", time.time() - load_start)
         except BaseException:
             self._unload_locked(reason="aborted mid-load")
             raise
@@ -208,11 +224,30 @@ class PipelineManager:
         Returns:
             Tuple of (shape_pipeline, texture_pipeline, background_remover)
         """
+        check_cancel = check_cancel or (lambda: None)
         with self._lock:
+            load_start = time.time()
             if self._shape_pipeline is None:
-                self._load_pipelines(check_cancel)
+                self._load_shape_locked(check_cancel)
+                check_cancel()  # checkpoint: between the two pipeline loads
+            if self._texture_pipeline is None:
+                self._load_texture_locked(check_cancel)
+                logger.info("All ML pipelines loaded in %.2fs", time.time() - load_start)
             self._last_usage = time.time()
             return self._shape_pipeline, self._texture_pipeline, self._rembg
+
+    def get_texture_pipelines(self, check_cancel=None) -> tuple[TexturePipeline, BackgroundRemoverType]:
+        """Get the texture pipeline (+ rembg) only, loading it if needed.
+
+        Skips the shape pipeline entirely — used by ``/texture-mesh`` where
+        the mesh comes from the caller, so the shape DiT's VRAM and load
+        time would be wasted.
+        """
+        with self._lock:
+            if self._texture_pipeline is None:
+                self._load_texture_locked(check_cancel)
+            self._last_usage = time.time()
+            return self._texture_pipeline, self._rembg
 
     def unload(self, reason: str = "external request") -> bool:
         """Unload pipelines and free GPU memory; returns whether anything
@@ -222,11 +257,16 @@ class PipelineManager:
         with self._lock:
             return self._unload_locked(reason)
 
+    def _loaded_locked(self) -> bool:
+        """Whether any pipeline is resident. Must be called with lock held."""
+        return self._shape_pipeline is not None or self._texture_pipeline is not None
+
     def _unload_locked(self, reason: str) -> bool:
         """``unload`` body for callers that already hold ``self._lock``."""
-        was_loaded = self._shape_pipeline is not None
+        was_loaded = self._loaded_locked()
         if was_loaded:
             logger.info("Unloading ML pipelines (%s)...", reason)
+        if self._shape_pipeline is not None:
             del self._shape_pipeline
             self._shape_pipeline = None
         if self._texture_pipeline is not None:
@@ -246,25 +286,17 @@ class PipelineManager:
     def status(self) -> tuple[bool, float | None]:
         """(loaded, last_usage) snapshot for ``/state``."""
         with self._lock:
-            return self._shape_pipeline is not None, self._last_usage
+            return self._loaded_locked(), self._last_usage
 
     def _checker_loop(self) -> None:
         """Background thread that checks for inactivity and unloads pipelines."""
         while not self._stop_checker.wait(self.CHECK_INTERVAL):
-            with self._lock:
-                if (
-                    self._last_usage is not None
-                    and self._shape_pipeline is not None
-                    and time.time() - self._last_usage > self.INACTIVITY_TIMEOUT
-                ):
-                    # Unload without holding lock (release and re-acquire)
-                    pass
-            # Check again outside the lock to avoid holding it during unload
+            # Check under the lock, unload outside it.
             should_unload = False
             with self._lock:
                 if (
                     self._last_usage is not None
-                    and self._shape_pipeline is not None
+                    and self._loaded_locked()
                     and time.time() - self._last_usage > self.INACTIVITY_TIMEOUT
                 ):
                     should_unload = True
@@ -710,7 +742,16 @@ def _process_image_to_glb(
 
     _check()  # checkpoint: after texture generation, before export
 
-    # Convert to GLB with trimesh, embedding PBR textures
+    _export_pbr_glb(output_mesh_path, output_textured_glb)
+
+    # Clean up intermediate files (output_mesh_path == output_textured_obj here)
+    _cleanup_texture_intermediates(output_mesh_path, extra=[output_glb])
+
+    return output_textured_glb
+
+
+def _export_pbr_glb(output_mesh_path: str, output_textured_glb: str) -> None:
+    """Convert the paint pipeline's OBJ output to a GLB with embedded PBR textures."""
     t = time.time()
     mesh_textured = trimesh.load(output_mesh_path, force="mesh")
 
@@ -743,21 +784,78 @@ def _process_image_to_glb(
     mesh_textured.export(output_textured_glb)
     logger.info("GLB conversion: %.2fs", time.time() - t)
 
-    # Clean up intermediate files
+
+def _cleanup_texture_intermediates(output_mesh_path: str, extra: list[str] | None = None) -> None:
+    """Remove the paint pipeline's intermediate files around ``output_mesh_path``."""
     cleanup_patterns = [
-        output_glb,
-        output_textured_obj,
+        output_mesh_path,
         output_mesh_path.replace(".obj", ".mtl"),
         output_mesh_path.replace(".obj", ".jpg"),
-        metallic_path,
-        roughness_path,
-        normal_path,
-        os.path.join(output_dir, "white_mesh_remesh.obj"),
-    ]
+        output_mesh_path.replace(".obj", "_metallic.jpg"),
+        output_mesh_path.replace(".obj", "_roughness.jpg"),
+        output_mesh_path.replace(".obj", "_normal.jpg"),
+        os.path.join(os.path.dirname(output_mesh_path), "white_mesh_remesh.obj"),
+    ] + (extra or [])
     for pattern in cleanup_patterns:
         for file in glob.glob(pattern):
             if os.path.exists(file):
                 os.remove(file)
+
+
+def _texture_mesh_to_glb(
+    mesh_path: str,
+    image_path: str,
+    texture_pipeline: TexturePipeline,
+    rembg: BackgroundRemoverType,
+    cancel: threading.Event | None = None,
+    use_remesh: bool = False,
+) -> str:
+    """Paint an externally-provided mesh with the texture pipeline.
+
+    The texture half of ``_process_image_to_glb``: rembg the reference
+    image, run the paint pipeline on ``mesh_path``, embed PBR textures and
+    return the textured GLB path.
+
+    Raises:
+        PreemptedError: If the request is cancelled between stages
+    """
+    def _check() -> None:
+        if cancel is not None and cancel.is_set():
+            raise PreemptedError("Request preempted by a newer request")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    input_name = os.path.splitext(os.path.basename(mesh_path))[0]
+    output_dir = os.path.join("outputs", f"{input_name}_{timestamp}")
+    os.makedirs(output_dir, exist_ok=True)
+
+    output_textured_obj = os.path.join(output_dir, f"{input_name}_textured.obj")
+    output_textured_glb = os.path.join(output_dir, f"{input_name}_textured.glb")
+
+    loaded_image = Image.open(image_path)
+    if loaded_image.mode != "RGB":
+        loaded_image = loaded_image.convert("RGB")
+    t = time.time()
+    logger.info("Applying background removal...")
+    image: Image.Image = rembg(loaded_image)
+    logger.info("Background removal: %.2fs", time.time() - t)
+
+    _check()  # checkpoint: after rembg, before texture generation
+
+    t = time.time()
+    output_mesh_path = texture_pipeline(
+        mesh_path=mesh_path,
+        image_path=image,
+        output_mesh_path=output_textured_obj,
+        use_remesh=use_remesh,
+        save_glb=False,
+        check_cancel=_check,
+    )
+    logger.info("Texture generation: %.2fs", time.time() - t)
+
+    _check()  # checkpoint: after texture generation, before export
+
+    _export_pbr_glb(output_mesh_path, output_textured_glb)
+    _cleanup_texture_intermediates(output_mesh_path)
 
     return output_textured_glb
 
@@ -879,6 +977,138 @@ def convert_image_to_3d(
             os.remove(temp_path)
 
     # Return the GLB file
+    filename = os.path.basename(output_path)
+    return FileResponse(
+        path=output_path,
+        media_type="application/octet-stream",
+        filename=filename,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+ALLOWED_MESH_EXTENSIONS = {"glb", "obj"}
+
+
+@app.post("/texture-mesh", response_model=None)
+def texture_mesh(
+    mesh: UploadFile = File(...),
+    image: UploadFile = File(...),
+    cancel_previous: bool = False,
+    smooth_normals: bool = False,
+    texture_steps: int = 8,
+    texture_views: int = 4,
+    texture_resolution: int = 512,
+    use_remesh: bool = False,  # False = keep the caller's topology; True = decimate to target_face_count first
+    target_face_count: int = 40000,  # honored only when use_remesh=True
+    fast_remesh: bool = False,
+) -> FileResponse | JSONResponse:
+    """Paint an externally-provided mesh from a reference image.
+
+    Texture-only counterpart of ``/convert-image-to-3d``: the shape stage is
+    skipped entirely (the shape pipeline is never loaded), the uploaded mesh's
+    UVs/textures are discarded and re-generated by the paint pipeline.
+
+    Args:
+        mesh: The mesh to paint (glb, obj)
+        image: The reference image (png, jpg, jpeg, webp)
+        cancel_previous: If true, cancel any in-progress generation before starting
+
+    Returns:
+        The textured GLB file
+
+    Raises:
+        HTTPException: 400 if a file type is invalid
+    """
+    if mesh.filename is None or image.filename is None:
+        raise HTTPException(status_code=400, detail="Filename is required")
+
+    mesh_extension = _get_file_extension(mesh.filename)
+    if mesh_extension not in ALLOWED_MESH_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid mesh file type: {mesh_extension}. Allowed: {', '.join(ALLOWED_MESH_EXTENSIONS)}",
+        )
+    image_extension = _get_file_extension(image.filename)
+    if image_extension not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid image file type: {image_extension}. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
+        )
+
+    logger.info(
+        "Received texture request for mesh: %s (image: %s)", mesh.filename, image.filename,
+    )
+    start_time = time.time()
+
+    # Own temp dir: the paint pipeline's remesh step writes intermediates next
+    # to the input mesh, so everything lands here and one rmtree cleans up.
+    temp_dir = tempfile.mkdtemp(prefix="texture_mesh_")
+    mesh_path = os.path.join(temp_dir, f"mesh.{mesh_extension}")
+    with open(mesh_path, "wb") as f:
+        f.write(mesh.file.read())
+    image_path = os.path.join(temp_dir, f"image.{image_extension}")
+    with open(image_path, "wb") as f:
+        f.write(image.file.read())
+
+    cancel: threading.Event | None = None
+    try:
+        cancel = preemption.begin(cancel_previous=cancel_previous)
+        preemption.check(cancel)
+        free_page_cache_if_needed()
+
+        texture_pipeline, rembg = pipeline_manager.get_texture_pipelines(
+            check_cancel=lambda: preemption.check(cancel),
+        )
+        # Same per-request config overrides as /convert-image-to-3d.
+        texture_pipeline.config.texture_steps = texture_steps
+        texture_pipeline.config.max_selected_view_num = texture_views
+        texture_pipeline.config.fast_remesh = fast_remesh
+        texture_pipeline.config.resolution = texture_resolution
+        texture_pipeline.config.target_face_count = target_face_count
+        if hasattr(texture_pipeline.models.get("multiview_model", None) or object(), "num_inference_steps"):
+            texture_pipeline.models["multiview_model"].num_inference_steps = texture_steps
+
+        output_path = _texture_mesh_to_glb(
+            mesh_path, image_path, texture_pipeline, rembg, cancel,
+            use_remesh=use_remesh,
+        )
+        if smooth_normals:
+            logger.info("Applying smooth normals to %s", output_path)
+            smooth_mesh_normals(output_path)
+        processing_time = time.time() - start_time
+        logger.info(
+            "Texturing completed for mesh: %s in %.2f seconds",
+            mesh.filename,
+            processing_time,
+        )
+    except PreemptedError:
+        processing_time = time.time() - start_time
+        logger.info(
+            "Texturing cancelled for mesh: %s after %.2f seconds",
+            mesh.filename,
+            processing_time,
+        )
+        return JSONResponse(
+            status_code=409,
+            content={"error": "Request cancelled"},
+        )
+    except Exception as e:
+        processing_time = time.time() - start_time
+        logger.error(
+            "Texturing failed for mesh: %s after %.2f seconds",
+            mesh.filename,
+            processing_time,
+        )
+        logger.error("Error details:\n%s", traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Texturing failed: {str(e)}"},
+        )
+    finally:
+        if cancel is not None:
+            preemption.end()
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
     filename = os.path.basename(output_path)
     return FileResponse(
         path=output_path,

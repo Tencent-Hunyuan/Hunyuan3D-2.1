@@ -20,11 +20,11 @@ import pymeshlab
 logger = logging.getLogger("hunyuan3d-api")
 
 
-def remesh_mesh(mesh_path, remesh_path, fast=False):
+def remesh_mesh(mesh_path, remesh_path, fast=False, target_count=40000):
     if fast:
-        mesh_simplify_fast(mesh_path, remesh_path)
+        mesh_simplify_fast(mesh_path, remesh_path, target_count=target_count)
     else:
-        mesh_simplify_trimesh(mesh_path, remesh_path)
+        mesh_simplify_trimesh(mesh_path, remesh_path, target_count=target_count)
 
 
 def mesh_simplify_fast(inputpath, outputpath, target_count=40000):

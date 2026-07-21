@@ -58,6 +58,7 @@ class Hunyuan3DPaintConfig:
         self.merge_method = "fast"
         self.texture_steps = texture_steps
         self.fast_remesh = False
+        self.target_face_count = None  # None -> remesh_mesh's default
 
         # view selection
         self.candidate_camera_azims = [0, 90, 180, 270, 0, 180]
@@ -120,7 +121,10 @@ class Hunyuan3DPaintPipeline:
         path = os.path.dirname(mesh_path)
         if use_remesh:
             processed_mesh_path = os.path.join(path, "white_mesh_remesh.obj")
-            remesh_mesh(mesh_path, processed_mesh_path, fast=self.config.fast_remesh)
+            remesh_kwargs = {}
+            if getattr(self.config, "target_face_count", None) is not None:
+                remesh_kwargs["target_count"] = self.config.target_face_count
+            remesh_mesh(mesh_path, processed_mesh_path, fast=self.config.fast_remesh, **remesh_kwargs)
         else:
             processed_mesh_path = mesh_path
         _check()
