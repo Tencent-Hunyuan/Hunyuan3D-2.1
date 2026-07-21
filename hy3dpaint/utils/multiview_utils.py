@@ -52,6 +52,12 @@ class multiviewDiffusionNet:
         pipeline.set_progress_bar_config(disable=True)
         pipeline.eval()
         setattr(pipeline, "view_size", cfg.model.params.get("view_size", 320))
+        # Bound VAE decode VRAM: the multiview batch is decoded in one shot,
+        # which OOMs on high texture_views. Slicing decodes the batch view by
+        # view; tiling caps per-view spatial footprint.
+        if hasattr(pipeline, "vae"):
+            pipeline.vae.enable_slicing()
+            pipeline.vae.enable_tiling()
         self.pipeline = pipeline.to(self.device)
 
         if hasattr(self.pipeline.unet, "use_dino") and self.pipeline.unet.use_dino:
