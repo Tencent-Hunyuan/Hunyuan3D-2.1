@@ -1,0 +1,3 @@
+# Extra dependencies needed only for training, not for inference.
+# Install after requirements.txt:  pip install -r requirements-training.txt
+deepspeed

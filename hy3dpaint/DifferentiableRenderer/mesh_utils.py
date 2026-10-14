@@ -14,11 +14,21 @@
 
 import os
 import cv2
-import bpy
 import math
 import numpy as np
 from io import StringIO
 from typing import Optional, Tuple, Dict, Any
+
+try:
+    import bpy
+
+    HAS_BPY = True
+except ImportError:
+    # bpy publishes wheels for a single CPython version per Blender release and has none
+    # for CPython 3.10 on Linux. It is only needed to convert the finished OBJ to GLB, so
+    # fall back to trimesh instead of making the whole texture pipeline unimportable.
+    bpy = None
+    HAS_BPY = False
 
 
 def _safe_extract_attribute(obj: Any, attr_path: str, default: Any = None) -> Any:
@@ -257,6 +267,58 @@ def _apply_auto_smooth(auto_smooth_angle: float):
         bpy.ops.object.shade_auto_smooth(angle=angle_rad)
 
 
+def _parse_mtl_maps(mtl_path: str) -> Dict[str, str]:
+    """Read the texture map paths out of a .mtl file, keyed by their mtl directive."""
+    maps, base_dir = {}, os.path.dirname(mtl_path)
+    with open(mtl_path) as handle:
+        for line in handle:
+            parts = line.split()
+            if len(parts) >= 2 and parts[0] in ("map_Kd", "map_Pm", "map_Pr"):
+                maps[parts[0]] = os.path.join(base_dir, parts[-1])
+    return maps
+
+
+def _convert_obj_to_glb_trimesh(obj_path: str, glb_path: str) -> bool:
+    """Convert the textured OBJ to GLB without Blender.
+
+    glTF carries metalness and roughness in one texture - roughness in green, metalness in
+    blue - so the separate map_Pr/map_Pm images are packed into a single image here.
+    """
+    import trimesh
+    from PIL import Image
+
+    mesh = trimesh.load(obj_path, force="mesh", process=False)
+    uv = getattr(mesh.visual, "uv", None)
+
+    mtl_path = os.path.splitext(obj_path)[0] + ".mtl"
+    maps = _parse_mtl_maps(mtl_path) if os.path.exists(mtl_path) else {}
+
+    def load(key):
+        path = maps.get(key)
+        return Image.open(path) if path and os.path.exists(path) else None
+
+    albedo, metallic, roughness = load("map_Kd"), load("map_Pm"), load("map_Pr")
+
+    packed = None
+    if metallic is not None or roughness is not None:
+        reference = metallic if metallic is not None else roughness
+        size = reference.size
+        empty = Image.new("L", size, 0)
+        green = roughness.convert("L").resize(size) if roughness is not None else empty
+        blue = metallic.convert("L").resize(size) if metallic is not None else empty
+        packed = Image.merge("RGB", (empty, green, blue))
+
+    material = trimesh.visual.material.PBRMaterial(
+        baseColorTexture=albedo,
+        metallicRoughnessTexture=packed,
+        metallicFactor=1.0 if metallic is not None else 0.0,
+        roughnessFactor=1.0,
+    )
+    mesh.visual = trimesh.visual.TextureVisuals(uv=uv, material=material)
+    mesh.export(glb_path)
+    return True
+
+
 def convert_obj_to_glb(
     obj_path: str,
     glb_path: str,
@@ -264,7 +326,12 @@ def convert_obj_to_glb(
     auto_smooth_angle: float = 60,
     merge_vertices: bool = False,
 ) -> bool:
-    """Convert OBJ file to GLB format using Blender."""
+    """Convert OBJ file to GLB format, using Blender when it is available."""
+    if not HAS_BPY:
+        try:
+            return _convert_obj_to_glb_trimesh(obj_path, glb_path)
+        except Exception:
+            return False
     try:
         _setup_blender_scene()
         _clear_scene_objects()

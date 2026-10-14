@@ -1,5 +1,9 @@
---extra-index-url https://mirrors.cloud.tencent.com/pypi/simple/
---extra-index-url https://mirrors.aliyun.com/pypi/simple
+# Mirrors are opt-in rather than hardcoded: they are much slower than PyPI outside
+# mainland China. To use them:
+#   PIP_EXTRA_INDEX_URL="https://mirrors.cloud.tencent.com/pypi/simple/ https://mirrors.aliyun.com/pypi/simple" pip install -r requirements.txt
+
+# pytorch-lightning 1.9.5 imports pkg_resources, which setuptools removed in 81.
+setuptools<81
 
 # Build Tools
 ninja==1.11.1.1
@@ -49,11 +53,9 @@ uvicorn==0.34.3
 tqdm==4.66.5
 psutil==6.0.0
 
-# GPU Computing (requires CUDA)
-cupy-cuda12x==13.4.1
-
-# Blender
-bpy==4.0
+# Blender (optional): bpy publishes wheels for one CPython version per release and has
+# none for cp310 on Linux. convert_obj_to_glb() falls back to trimesh when it is absent.
+# Install manually if your interpreter has a matching wheel:  pip install bpy
 
 # ONNX Runtime
 onnxruntime==1.16.3
@@ -64,5 +66,7 @@ pydantic==2.10.6
 timm
 pythreejs
 torchdiffeq
-deepspeed
+
+# Training-only extras live in requirements-training.txt (deepspeed is unpinned upstream
+# and makes pip backtrack across torch versions, which can take hours).
 
