@@ -10,6 +10,16 @@ python3 minimal_demo.py
 
 **Memory Recommendation:** For we recommend using a GPU with at least **10GB VRAM**.
 
+## Sampling steps
+
+The default flow-matching schedule uses `num_inference_steps` non-zero Euler
+intervals from 0 to 1. This replaces the previous schedule's repeated terminal
+sigma: N default steps now follow the same effective trajectory as N+1 steps
+with the previous default. Generated results at the same step count can change.
+To reproduce the previous schedule, pass
+`sigmas=np.linspace(0, 1, num_inference_steps)` explicitly; custom sigma sequences
+are passed to the scheduler unchanged.
+
 # Training
 
 Here we demonstrate the complete training workflow of DiT on a small dataset.
