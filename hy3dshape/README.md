@@ -10,6 +10,57 @@ python3 minimal_demo.py
 
 **Memory Recommendation:** For we recommend using a GPU with at least **10GB VRAM**.
 
+## LoRA inference
+
+Install `peft==0.14.0` alongside the repository dependencies. For the official
+2.1 denoiser, add this under `model.params` in the training YAML:
+
+```yaml
+lora_config:
+  rank: 16
+  target_modules: [to_q, to_k, to_v]
+```
+
+The trainer uses `lora_alpha=rank`; keep the same rank and target modules when
+loading a complete checkpoint. Save the trained PEFT denoiser as an adapter directory:
+
+```python
+# diffuser is the trained Diffuser; export after gathering distributed weights.
+diffuser.model.save_pretrained("shape_adapter")
+```
+
+Load that adapter onto the same base model used for training:
+
+```python
+from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
+
+pipe = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained("tencent/Hunyuan3D-2.1")
+pipe.load_lora_weights("shape_adapter")
+mesh = pipe(image="image.png")[0]
+mesh.export("lora.glb")
+```
+
+For a complete training checkpoint, pass its original LoRA configuration:
+
+```python
+pipe.load_lora_weights(
+    "pytorch_model.bin",
+    lora_config={"rank": 16, "target_modules": ["to_q", "to_k", "to_v"]},
+)
+```
+
+This accepts a consolidated DeepSpeed state dict (`_forward_module.model.*`)
+or a Lightning checkpoint (`state_dict` containing `model.*`). The denoiser
+architecture must match training; `minimal_demo_with_ckpt.py` reconstructs it
+from the training YAML for custom architectures. All denoiser weights, including
+LoRA weights, must be present in a complete checkpoint. Keys and tensor shapes
+are checked before copying any weights. A mismatch raises `ValueError` and
+removes the temporary adapter layers, so the base model can be used again.
+Adapter directories must contain exactly the expected adapter keys.
+Load before enabling CPU offload or compiling the pipeline, and use a fresh
+base model to switch adapters. This loader restores denoiser weights; it does
+not restore a separately trained image encoder or resume optimizer state.
+
 # Training
 
 Here we demonstrate the complete training workflow of DiT on a small dataset.
