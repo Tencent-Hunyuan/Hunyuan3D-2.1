@@ -10,6 +10,11 @@ python3 minimal_demo.py
 
 **Memory Recommendation:** For we recommend using a GPU with at least **10GB VRAM**.
 
+## Gotchas
+
+- Hierarchical grid spacing and bounds must remain floating point: casting
+  them to the integer index dtype truncates sub-unit spacing to zero.
+
 # Training
 
 Here we demonstrate the complete training workflow of DiT on a small dataset.
