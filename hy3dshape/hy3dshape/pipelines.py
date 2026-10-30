@@ -735,7 +735,7 @@ class Hunyuan3DDiTFlowMatchingPipeline(Hunyuan3DDiTPipeline):
 
         # 5. Prepare timesteps
         # NOTE: this is slightly different from common usage, we start from 0.
-        sigmas = np.linspace(0, 1, num_inference_steps) if sigmas is None else sigmas
+        sigmas = np.linspace(0, 1, num_inference_steps, endpoint=False) if sigmas is None else sigmas
         timesteps, num_inference_steps = retrieve_timesteps(
             self.scheduler,
             num_inference_steps,
