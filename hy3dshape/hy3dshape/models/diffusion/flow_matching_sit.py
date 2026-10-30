@@ -65,7 +65,7 @@ class Diffuser(pl.LightningModule):
             loraconfig = LoraConfig(
                 r=lora_config.rank,
                 lora_alpha=lora_config.rank,
-                target_modules=lora_config.get('target_modules')
+                target_modules=list(lora_config['target_modules'])
             )
             self.model = get_peft_model(self.model, loraconfig)
 

@@ -250,6 +250,58 @@ class Hunyuan3DDiTPipeline:
         self.model = torch.compile(self.model)
         self.conditioner = torch.compile(self.conditioner)
 
+    def load_lora_weights(self, path, lora_config=None):
+        """Load a PEFT adapter directory or a complete LoRA training checkpoint."""
+        from peft import LoraConfig, PeftConfig, PeftModel, get_peft_model
+        from peft.utils import (
+            get_peft_model_state_dict,
+            load_peft_weights,
+            set_peft_model_state_dict,
+        )
+
+        if isinstance(self.model, PeftModel):
+            raise TypeError('Load LoRA weights onto a pipeline with an unwrapped base model.')
+
+        if lora_config is None:
+            config = PeftConfig.from_pretrained(path)
+            weights = load_peft_weights(path, device='cpu')
+        else:
+            config = LoraConfig(
+                r=lora_config['rank'],
+                lora_alpha=lora_config['rank'],
+                target_modules=list(lora_config['target_modules']),
+            )
+            checkpoint = torch.load(path, map_location='cpu', weights_only=True)
+            state_dict = checkpoint.get('state_dict', checkpoint)
+            weights = {
+                key.removeprefix('_forward_module.').removeprefix('model.'): value
+                for key, value in state_dict.items()
+                if key.startswith(('model.', '_forward_module.model.'))
+            }
+
+        trainable = [(parameter, parameter.requires_grad) for parameter in self.model.parameters()]
+        model = get_peft_model(self.model, config)
+        expected = get_peft_model_state_dict(model) if lora_config is None else model.state_dict()
+        missing = expected.keys() - weights.keys()
+        unexpected = weights.keys() - expected.keys()
+        mismatched = {
+            key for key in expected.keys() & weights.keys()
+            if not isinstance(weights[key], torch.Tensor) or weights[key].shape != expected[key].shape
+        }
+        if missing or unexpected or mismatched:
+            self.model = model.unload()
+            for parameter, requires_grad in trainable:
+                parameter.requires_grad_(requires_grad)
+            raise ValueError(
+                f'LoRA weights do not match: missing={sorted(missing)}, unexpected={sorted(unexpected)}, '
+                f'invalid shapes={sorted(mismatched)}'
+            )
+        if lora_config is None:
+            set_peft_model_state_dict(model, weights)
+        else:
+            model.load_state_dict(weights, strict=True)
+        self.model = model.to(device=self.device, dtype=self.dtype).eval().requires_grad_(False)
+
     def enable_flashvdm(
         self,
         enabled: bool = True,

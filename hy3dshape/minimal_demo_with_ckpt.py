@@ -31,12 +31,17 @@ ckpt_cfg_path = 'output_folder/dit/overfitting_depth_16_token_4096_lr1e4/hunyuan
 ckpt_path = 'output_folder/dit/overfitting_depth_16_token_4096_lr1e4/ckpt/ckpt-step=00004000.ckpt/out/pytorch_model.bin'
 config = yaml.safe_load(open(ckpt_cfg_path, 'r'))
 model = instantiate_from_config(config['model']['params']['denoiser_cfg'])
-sd = torch.load(ckpt_path)
-sd = {k.replace('_forward_module.model.', ''):v for k,v in sd.items()}
-msg = model.load_state_dict(sd)
-print(msg)
-model = model.cuda().half()
-pipeline_shapegen.model = model
+lora_config = config['model']['params'].get('lora_config')
+if lora_config is not None:
+    pipeline_shapegen.model = model
+    pipeline_shapegen.load_lora_weights(ckpt_path, lora_config=lora_config)
+else:
+    sd = torch.load(ckpt_path)
+    sd = {k.replace('_forward_module.model.', ''):v for k,v in sd.items()}
+    msg = model.load_state_dict(sd)
+    print(msg)
+    model = model.cuda().half()
+    pipeline_shapegen.model = model
 
 
 image = 'tools/mini_testset/images/015.png'
